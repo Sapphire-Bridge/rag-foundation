@@ -1,0 +1,18 @@
+title = "RAG Assistant Allowlist"
+
+[allowlist]
+description = "Allow development defaults identified in security analysis"
+regexes = [
+    "DEV_DEFAULT_JWT_SECRET", # backend/app/config.py dev default
+    "localdev_password_change_in_production", # docker-compose dev DB default
+    "GEMINI_MOCK_MODE",
+    "USE_GENAI_STUB"
+]
+
+[ignore]
+files = [
+    "^frontend/package-lock\\.json$",
+    "^backend/requirements\\.lock$",
+    "^frontend/dist/.*",
+    "^.*/test-results/.*"
+]

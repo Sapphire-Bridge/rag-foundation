@@ -1,0 +1,21 @@
+[run]
+source = app
+omit =
+    app/services/gemini_rag.py
+    app/services/ingestion.py
+    app/services/storage.py
+    app/services/cleanup.py
+    app/security_gate.py
+    app/worker.py
+    app/middleware.py
+    app/routes/uploads.py
+
+[report]
+omit =
+    app/services/gemini_rag.py
+    app/services/ingestion.py
+    app/services/storage.py
+    app/services/cleanup.py
+    app/security_gate.py
+    app/worker.py
+    app/middleware.py

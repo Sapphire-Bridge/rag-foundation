@@ -1,0 +1,49 @@
+name: ci-basic
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Admin audit pattern check
+        run: python backend/scripts/check_admin_patterns.py
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          cd backend
+          pip install -e .[test]
+          alembic upgrade head
+
+      - name: Backend smoke tests
+        run: |
+          FAST_TESTS=0 STRICT_MODE=1 ./scripts/test-backend.sh
+
+      - name: Check OpenAPI drift
+        run: |
+          cd backend
+          GEMINI_MOCK_MODE=true GEMINI_API_KEY=export-mock-key python scripts/export_openapi.py
+          git diff --exit-code openapi.yaml
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Frontend smoke (build only when FAST_TESTS=1)
+        run: |
+          FAST_TESTS=0 STRICT_MODE=1 ./scripts/test-frontend.sh

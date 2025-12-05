@@ -1,0 +1,9 @@
+RAG Assistant
+
+This product includes software developed by the RAG project contributors.
+
+Third-party components (used under their respective licenses):
+- FastAPI, Uvicorn, and Gunicorn (ASGI stack)
+- SQLAlchemy (ORM) and Alembic (migrations)
+- ARQ (Redis-based background worker)
+- React and Vite (frontend)

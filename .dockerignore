@@ -1,0 +1,10 @@
+.git
+.env
+**/__pycache__/
+*.pyc
+backend/.venv
+frontend/node_modules
+frontend/dist
+backend/tests
+.github
+genai-test

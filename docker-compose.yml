@@ -1,0 +1,158 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme_local_only}
+      POSTGRES_DB: rag
+      POSTGRES_USER: rag
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - rag-network
+
+  migrations:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      GEMINI_MOCK_MODE: ${GEMINI_MOCK_MODE:-true}
+      # Use DOCKER_DATABASE_URL to avoid picking up a local sqlite://.env default.
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg2://rag:changeme_local_only@db:5432/rag}
+      JWT_SECRET: ${JWT_SECRET:-dev_secret_DO_NOT_USE_IN_PRODUCTION_generate_real_secret_with_secrets_module}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      DATABASE_URL_FILE: /run/secrets/database_url
+      REDIS_URL_FILE: /run/secrets/redis_url
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    secrets:
+      - jwt_secret
+      - gemini_api_key
+      - database_url
+      - redis_url
+    networks:
+      - rag-network
+
+  backend:
+    build: ./backend
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      GEMINI_MOCK_MODE: ${GEMINI_MOCK_MODE:-true}
+      # Use DOCKER_DATABASE_URL to avoid picking up a local sqlite://.env default.
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg2://rag:changeme_local_only@db:5432/rag}
+      JWT_SECRET: ${JWT_SECRET:-dev_secret_DO_NOT_USE_IN_PRODUCTION_generate_real_secret_with_secrets_module}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ALLOW_DEV_LOGIN: ${ALLOW_DEV_LOGIN:-false}
+      REQUIRE_CSRF_HEADER: ${REQUIRE_CSRF_HEADER:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:5173","http://localhost:3000"]}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      DATABASE_URL_FILE: /run/secrets/database_url
+      REDIS_URL_FILE: /run/secrets/redis_url
+    ports: ["8000:8000"]
+    command: ["gunicorn", "app.main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
+    volumes:
+      - uploads_tmp:/tmp/rag_uploads
+    secrets:
+      - jwt_secret
+      - gemini_api_key
+      - database_url
+      - redis_url
+    networks:
+      - rag-network
+
+  worker:
+    build: ./backend
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      GEMINI_MOCK_MODE: ${GEMINI_MOCK_MODE:-true}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg2://rag:changeme_local_only@db:5432/rag}
+      JWT_SECRET: ${JWT_SECRET:-dev_secret_DO_NOT_USE_IN_PRODUCTION_generate_real_secret_with_secrets_module}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      DATABASE_URL_FILE: /run/secrets/database_url
+      REDIS_URL_FILE: /run/secrets/redis_url
+    command: ["arq", "app.worker.WorkerSettings"]
+    volumes:
+      - uploads_tmp:/tmp/rag_uploads
+    secrets:
+      - jwt_secret
+      - gemini_api_key
+      - database_url
+      - redis_url
+    networks:
+      - rag-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports: ["5173:5173"]
+    depends_on: [backend]
+    environment:
+      VITE_BACKEND_ORIGIN: ${VITE_BACKEND_ORIGIN:-http://backend:8000}
+    networks:
+      - rag-network
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - rag-network
+
+networks:
+  rag-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+      com.docker.network.bridge.enable_icc: "true"
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_tmp:
+
+secrets:
+  jwt_secret:
+    file: ./secrets/jwt_secret
+  gemini_api_key:
+    file: ./secrets/gemini_api_key
+  database_url:
+    file: ./secrets/database_url
+  redis_url:
+    file: ./secrets/redis_url

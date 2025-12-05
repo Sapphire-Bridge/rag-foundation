@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.dist-info/
+.venv/
+venv/
+.env
+.env.*
+*.db
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+genai-test/
+
+# OS / misc
+.DS_Store
+secrets/
+certs/
+
+# Local overrides
+backend/.env
+
+# Additional exclusions for public repo
+.npm-cache/
+*.coverage
+FULL_AUDIT_REPORT*.md
+repo-interview.md
+security_interview.md
+repo_content.txt
+script.md
+open-projects/

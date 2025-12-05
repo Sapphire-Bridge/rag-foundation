@@ -1,0 +1,102 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  PYTHONUNBUFFERED: "1"
+  GEMINI_MOCK_MODE: "true"
+  USE_GOOGLE_GENAI_STUB: "1"
+  DATABASE_URL: "sqlite:///./test.db"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+      - name: DB migrate
+        run: alembic upgrade head
+      - name: Lint/format/type
+        run: |
+          ruff format --check .
+          ruff check .
+          mypy app
+      - name: pip-audit
+        run: pip-audit -r requirements.lock --strict
+      - name: Tests
+        run: pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - run: npm ci
+      - run: npm audit --production --audit-level=high
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test -- --runInBand
+      - run: npm run build
+
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Backend licenses
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock pip-licenses
+          pip-licenses --format=json --with-license-file --ignore-packages pip setuptools wheel > licenses.json
+      - name: Frontend licenses
+        working-directory: frontend
+        run: |
+          npm ci
+          npx license-checker --production --json --out licenses.json
+      - name: Upload license artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: licenses
+          path: |
+            backend/licenses.json
+            frontend/licenses.json
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        run: gitleaks detect --source . -v
+      - name: Semgrep
+        run: |
+          docker run --rm -v "${PWD}:/src" returntocorp/semgrep semgrep scan \
+            --config p/owasp-top-ten --config p/python --config p/secrets \
+            --exclude frontend/node_modules --exclude frontend/dist \
+            --exclude frontend/playwright-report --exclude frontend/test-results \
+            --exclude backend/rag_assistant_backend.egg-info --timeout 600

@@ -1,0 +1,2 @@
+# placeholder; must match Postgres credentials, e.g.:
+# postgresql+psycopg2://rag:<postgres_password>@db:5432/rag

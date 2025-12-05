@@ -1,0 +1,2 @@
+# placeholder; Redis URL inside the compose network
+# redis://redis:6379/0

@@ -1,0 +1,9 @@
+sample:
+  display_name: bench-sample
+  questions: scripts/benchmark/datasets/sample/questions.jsonl
+  docs_path: scripts/benchmark/datasets/sample/docs
+  concurrency: 2
+  top_k: 5
+  language: en
+  max_questions: 100
+  description: "Tiny smoke test data shape; drop your PDFs in docs_path or point --questions to your own set."

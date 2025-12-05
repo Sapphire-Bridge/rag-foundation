@@ -1,0 +1,13 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.8
+    hooks:
+      - id: ruff
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: admin-audit-patterns
+        name: Ensure admin mutations are audited
+        entry: python backend/scripts/check_admin_patterns.py
+        language: system
+        pass_filenames: false

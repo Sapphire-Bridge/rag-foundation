@@ -1,0 +1,47 @@
+services:
+  # -----------------------------------------------------------
+  # BACKEND: Switch from Gunicorn (Prod) to Uvicorn (Dev)
+  # -----------------------------------------------------------
+  backend:
+    build:
+      context: ./backend  # Point to backend Dockerfile location
+    volumes:
+      - ./backend/app:/app/app  # Hot-reload app code without overwriting entrypoint
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --no-access-log
+    environment:
+      - LOG_LEVEL=DEBUG
+      - ENVIRONMENT=development
+
+  # -----------------------------------------------------------
+  # WORKER: Enable code syncing for background tasks
+  # -----------------------------------------------------------
+  worker:
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
+    # Uses watchmedo (requires 'watchdog' in requirements.txt) to restart worker on file change
+    # If you don't have watchdog, remove the command override; volume sync still helps.
+    command: watchmedo auto-restart --directory=./app --pattern=*.py --recursive -- arq app.worker.WorkerSettings
+
+  # -----------------------------------------------------------
+  # FRONTEND: Ensure Vite exposes host correctly
+  # -----------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: build
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules # Prevent host node_modules from overwriting container's
+    command: npm run dev -- --host
+
+  # -----------------------------------------------------------
+  # DB: Expose port to Host machine (for DB GUI tools like DBeaver)
+  # -----------------------------------------------------------
+  db:
+    ports:
+      - "5432:5432"

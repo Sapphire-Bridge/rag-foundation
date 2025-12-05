@@ -1,0 +1,1403 @@
+openapi: 3.1.0
+info:
+  title: RAG Assistant Backend
+  version: 0.2.1
+paths:
+  /api/auth/register:
+    post:
+      tags:
+      - auth
+      summary: Register
+      operationId: register_api_auth_register_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterIn'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/auth/login:
+    post:
+      tags:
+      - auth
+      summary: Login
+      operationId: login_api_auth_login_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginIn'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/auth/logout:
+    post:
+      tags:
+      - auth
+      summary: Logout
+      description: 'Logout endpoint. Revokes the current JWT token by adding its JTI
+        to the revocation list.
+
+        The token will be invalid until its natural expiration.'
+      operationId: logout_api_auth_logout_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/stores:
+    get:
+      tags:
+      - stores
+      summary: List Stores
+      operationId: list_stores_api_stores_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StoreOut'
+                title: Response List Stores Api Stores Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - stores
+      summary: Create Store
+      operationId: create_store_api_stores_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreCreate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/stores/{store_id}:
+    delete:
+      tags:
+      - stores
+      summary: Delete Store
+      operationId: delete_store_api_stores__store_id__delete
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Store Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/stores/{store_id}/restore:
+    post:
+      tags:
+      - stores
+      summary: Restore Store
+      operationId: restore_store_api_stores__store_id__restore_post
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Store Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/documents/store/{store_id}:
+    get:
+      tags:
+      - documents
+      summary: List Documents For Store
+      operationId: list_documents_for_store_api_documents_store__store_id__get
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Store Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentOut'
+                title: Response List Documents For Store Api Documents Store  Store
+                  Id  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/documents/{document_id}:
+    delete:
+      tags:
+      - documents
+      summary: Delete Document
+      operationId: delete_document_api_documents__document_id__delete
+      parameters:
+      - name: document_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Document Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/documents/{document_id}/restore:
+    post:
+      tags:
+      - documents
+      summary: Restore Document
+      operationId: restore_document_api_documents__document_id__restore_post
+      parameters:
+      - name: document_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Document Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/upload:
+    post:
+      tags:
+      - upload
+      summary: Upload
+      operationId: upload_api_upload_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_upload_api_upload_post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/upload/op-status/{op_id}:
+    get:
+      tags:
+      - upload
+      summary: Op Status
+      operationId: op_status_api_upload_op_status__op_id__get
+      parameters:
+      - name: op_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Op Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpStatus'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/chat:
+    post:
+      tags:
+      - chat
+      summary: Chat Stream
+      operationId: chat_stream_api_chat_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+              description: Chat request payload
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            text/event-stream: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/costs/summary:
+    get:
+      tags:
+      - costs
+      summary: Costs Summary
+      operationId: costs_summary_api_costs_summary_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostsSummary'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/settings:
+    get:
+      tags:
+      - settings
+      summary: Read Settings
+      operationId: read_settings_api_settings_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppSettings'
+    post:
+      tags:
+      - settings
+      summary: Update Settings
+      operationId: update_settings_api_settings_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppSettingsUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppSettings'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/users:
+    get:
+      tags:
+      - admin
+      summary: List Users
+      operationId: list_users_api_admin_users_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminUserOut'
+                title: Response List Users Api Admin Users Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/users/{user_id}/role:
+    post:
+      tags:
+      - admin
+      summary: Set User Role
+      operationId: set_user_role_api_admin_users__user_id__role_post
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: User Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserRoleUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/budgets/{user_id}:
+    post:
+      tags:
+      - admin
+      summary: Upsert Budget
+      operationId: upsert_budget_api_admin_budgets__user_id__post
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: User Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BudgetUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BudgetUpdate'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/audit:
+    get:
+      tags:
+      - admin
+      summary: List Audit Logs
+      operationId: list_audit_logs_api_admin_audit_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminAuditEntry'
+                title: Response List Audit Logs Api Admin Audit Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/system/summary:
+    get:
+      tags:
+      - admin
+      summary: System Summary
+      operationId: system_summary_api_admin_system_summary_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSystemSummary'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/watchdog/reset-stuck:
+    post:
+      tags:
+      - admin
+      summary: Admin Reset Stuck
+      operationId: admin_reset_stuck_api_admin_watchdog_reset_stuck_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WatchdogResetRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchdogResetResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/audit/deletions:
+    get:
+      tags:
+      - admin
+      summary: Get Deletion Audit
+      operationId: get_deletion_audit_api_admin_audit_deletions_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeletionAuditEntry'
+                title: Response Get Deletion Audit Api Admin Audit Deletions Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /metrics:
+    get:
+      summary: Metrics
+      operationId: metrics_metrics_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            text/plain:
+              schema:
+                type: string
+        '403':
+          description: Forbidden
+  /health:
+    get:
+      summary: Health
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+components:
+  schemas:
+    AdminAuditEntry:
+      properties:
+        id:
+          type: integer
+          title: Id
+        admin_user_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Admin User Id
+        action:
+          type: string
+          title: Action
+        target_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Target Type
+        target_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Target Id
+        metadata_json:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Metadata Json
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - action
+      - created_at
+      title: AdminAuditEntry
+    AdminSystemSummary:
+      properties:
+        users:
+          type: integer
+          title: Users
+        stores:
+          type: integer
+          title: Stores
+        documents:
+          type: integer
+          title: Documents
+      type: object
+      required:
+      - users
+      - stores
+      - documents
+      title: AdminSystemSummary
+    AdminUserOut:
+      properties:
+        id:
+          type: integer
+          title: Id
+        email:
+          type: string
+          format: email
+          title: Email
+        is_admin:
+          type: boolean
+          title: Is Admin
+        is_active:
+          type: boolean
+          title: Is Active
+        admin_notes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Admin Notes
+        monthly_limit_usd:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Monthly Limit Usd
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - email
+      - is_admin
+      - is_active
+      - created_at
+      title: AdminUserOut
+    AdminUserRoleUpdate:
+      properties:
+        is_admin:
+          type: boolean
+          title: Is Admin
+        admin_notes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Admin Notes
+      type: object
+      required:
+      - is_admin
+      title: AdminUserRoleUpdate
+    AppSettings:
+      properties:
+        app_name:
+          type: string
+          maxLength: 100
+          title: App Name
+          default: RAG Assistant
+        app_icon:
+          type: string
+          maxLength: 50
+          title: App Icon
+          default: sparkles
+        theme_preset:
+          type: string
+          enum:
+          - minimal
+          - gradient
+          - classic
+          title: Theme Preset
+          default: minimal
+        primary_color:
+          type: string
+          maxLength: 20
+          title: Primary Color
+          default: '#2563EB'
+        accent_color:
+          type: string
+          maxLength: 20
+          title: Accent Color
+          default: '#6366F1'
+        app_favicon:
+          type: string
+          maxLength: 200000
+          title: App Favicon
+          default: ''
+        welcome_message:
+          type: string
+          maxLength: 255
+          title: Welcome Message
+          default: Hi! I'm your RAG assistant. Ask me anything about your documents.
+        suggested_prompt_1:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Suggested Prompt 1
+          default: Summarize the key findings from my uploads.
+        suggested_prompt_2:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Suggested Prompt 2
+          default: What are the main risks or open questions?
+        suggested_prompt_3:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Suggested Prompt 3
+          default: Create an outline using the latest documents.
+      type: object
+      title: AppSettings
+    AppSettingsUpdate:
+      properties:
+        app_name:
+          anyOf:
+          - type: string
+            maxLength: 100
+          - type: 'null'
+          title: App Name
+        app_icon:
+          anyOf:
+          - type: string
+            maxLength: 50
+          - type: 'null'
+          title: App Icon
+        theme_preset:
+          anyOf:
+          - type: string
+            enum:
+            - minimal
+            - gradient
+            - classic
+          - type: 'null'
+          title: Theme Preset
+        primary_color:
+          anyOf:
+          - type: string
+            maxLength: 20
+          - type: 'null'
+          title: Primary Color
+        accent_color:
+          anyOf:
+          - type: string
+            maxLength: 20
+          - type: 'null'
+          title: Accent Color
+        app_favicon:
+          anyOf:
+          - type: string
+            maxLength: 200000
+          - type: 'null'
+          title: App Favicon
+        welcome_message:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Welcome Message
+        suggested_prompt_1:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Suggested Prompt 1
+        suggested_prompt_2:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Suggested Prompt 2
+        suggested_prompt_3:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Suggested Prompt 3
+      type: object
+      title: AppSettingsUpdate
+    Body_upload_api_upload_post:
+      properties:
+        storeId:
+          type: integer
+          title: Storeid
+          description: ID of the target store
+        file:
+          type: string
+          format: binary
+          title: File
+          description: Document file to ingest
+        displayName:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Displayname
+          description: Optional display name override
+      type: object
+      required:
+      - storeId
+      - file
+      title: Body_upload_api_upload_post
+    BudgetUpdate:
+      properties:
+        monthly_limit_usd:
+          type: number
+          maximum: 99999999.99
+          minimum: 0.0
+          title: Monthly Limit Usd
+      type: object
+      required:
+      - monthly_limit_usd
+      title: BudgetUpdate
+    ChatRequest:
+      properties:
+        question:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Question
+        messages:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+          - type: 'null'
+          title: Messages
+        session_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        storeIds:
+          items:
+            type: integer
+          type: array
+          minItems: 1
+          title: Storeids
+          description: List of store IDs to query against.
+        project_id:
+          anyOf:
+          - {}
+          - type: 'null'
+          title: Project Id
+        tags:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Tags
+        metadataFilter:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Metadatafilter
+          description: Optional metadata filter applied server-side.
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+      type: object
+      required:
+      - storeIds
+      title: ChatRequest
+    CostsSummary:
+      properties:
+        month:
+          type: string
+          title: Month
+        query_cost_usd:
+          type: number
+          title: Query Cost Usd
+        indexing_cost_usd:
+          type: number
+          title: Indexing Cost Usd
+        total_usd:
+          type: number
+          title: Total Usd
+        prompt_tokens:
+          type: integer
+          title: Prompt Tokens
+        completion_tokens:
+          type: integer
+          title: Completion Tokens
+        index_tokens:
+          type: integer
+          title: Index Tokens
+        monthly_budget_usd:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Monthly Budget Usd
+        remaining_budget_usd:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Remaining Budget Usd
+      type: object
+      required:
+      - month
+      - query_cost_usd
+      - indexing_cost_usd
+      - total_usd
+      - prompt_tokens
+      - completion_tokens
+      - index_tokens
+      title: CostsSummary
+    DeletionAuditEntry:
+      properties:
+        store_id:
+          type: integer
+          title: Store Id
+        deleted_at:
+          type: string
+          format: date-time
+          title: Deleted At
+        deleted_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Deleted By
+      type: object
+      required:
+      - store_id
+      - deleted_at
+      title: DeletionAuditEntry
+    DocumentOut:
+      properties:
+        id:
+          type: integer
+          title: Id
+        store_id:
+          type: integer
+          title: Store Id
+        filename:
+          type: string
+          maxLength: 255
+          title: Filename
+        display_name:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Display Name
+        status:
+          $ref: '#/components/schemas/DocumentStatus'
+        size_bytes:
+          type: integer
+          title: Size Bytes
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        gcs_uri:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Gcs Uri
+      type: object
+      required:
+      - id
+      - store_id
+      - filename
+      - status
+      - size_bytes
+      - created_at
+      title: DocumentOut
+    DocumentStatus:
+      type: string
+      enum:
+      - PENDING
+      - RUNNING
+      - DONE
+      - ERROR
+      title: DocumentStatus
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HealthStatus:
+      properties:
+        database:
+          type: boolean
+          title: Database
+        gemini_api:
+          type: boolean
+          title: Gemini Api
+        redis:
+          type: boolean
+          title: Redis
+      type: object
+      required:
+      - database
+      - gemini_api
+      - redis
+      title: HealthStatus
+    LoginIn:
+      properties:
+        email:
+          type: string
+          format: email
+          title: Email
+        password:
+          type: string
+          title: Password
+      type: object
+      required:
+      - email
+      - password
+      title: LoginIn
+    OpStatus:
+      properties:
+        status:
+          $ref: '#/components/schemas/DocumentStatus'
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - status
+      title: OpStatus
+    RegisterIn:
+      properties:
+        email:
+          type: string
+          format: email
+          title: Email
+        password:
+          type: string
+          maxLength: 72
+          minLength: 6
+          title: Password
+      type: object
+      required:
+      - email
+      - password
+      title: RegisterIn
+    StoreCreate:
+      properties:
+        display_name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Display Name
+      type: object
+      required:
+      - display_name
+      title: StoreCreate
+    StoreOut:
+      properties:
+        id:
+          type: integer
+          title: Id
+        display_name:
+          type: string
+          title: Display Name
+        fs_name:
+          type: string
+          title: Fs Name
+      type: object
+      required:
+      - id
+      - display_name
+      - fs_name
+      title: StoreOut
+    TokenOut:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+        token_type:
+          type: string
+          title: Token Type
+          default: bearer
+      type: object
+      required:
+      - access_token
+      title: TokenOut
+    UploadResponse:
+      properties:
+        op_id:
+          type: string
+          title: Op Id
+        document_id:
+          type: integer
+          title: Document Id
+        file_display_name:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: File Display Name
+        estimated_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Estimated Tokens
+        estimated_cost_usd:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Estimated Cost Usd
+      type: object
+      required:
+      - op_id
+      - document_id
+      title: UploadResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    WatchdogResetRequest:
+      properties:
+        user_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: User Id
+        ttl_minutes:
+          type: integer
+          title: Ttl Minutes
+          default: 30
+      type: object
+      title: WatchdogResetRequest
+    WatchdogResetResponse:
+      properties:
+        reset_count:
+          type: integer
+          title: Reset Count
+      type: object
+      required:
+      - reset_count
+      title: WatchdogResetResponse

@@ -1,0 +1,97 @@
+name: ci-strict
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  strict:
+    runs-on: ubuntu-latest
+    env:
+      STRICT_MODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Admin audit pattern check
+        run: python backend/scripts/check_admin_patterns.py
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          cd backend
+          pip install -r requirements.lock
+          pip install pytest httpx pytest-asyncio pytest-cov pip-audit bandit
+          alembic upgrade head
+
+      - name: Backend full suite
+        run: |
+          ./scripts/test-backend.sh
+
+      - name: pip-audit (backend)
+        run: |
+          cd backend
+          pip-audit -r requirements.lock --strict
+
+      - name: Bandit (backend)
+        run: |
+          cd backend
+          bandit -r app -x tests
+
+      - name: Build backend image
+        run: |
+          docker build -t rag-backend:ci backend
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: rag-backend:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Frontend tests + build
+        run: |
+          ./scripts/test-frontend.sh
+
+      - name: Frontend audit
+        run: |
+          cd frontend
+          npm audit --production --audit-level=high
+
+      - name: SBOM (SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          output-file: sbom.spdx.json
+          format: spdx-json
+
+      - name: OpenAPI drift check
+        run: |
+          cd backend
+          python - <<'PY'
+from app.main import create_app
+from fastapi.openapi.utils import get_openapi
+import yaml, sys, pathlib
+app = create_app()
+spec = get_openapi(title=app.title, version=app.version, routes=app.routes)
+p = pathlib.Path('../openapi.yaml')
+current = yaml.safe_load(p.read_text()) if p.exists() else {}
+if spec != current:
+    print('OpenAPI diff detected. Re-generate with backend/scripts/export_openapi.py')
+    sys.exit(1)
+print('OpenAPI up-to-date')
+PY

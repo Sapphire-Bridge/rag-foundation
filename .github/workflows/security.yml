@@ -1,0 +1,152 @@
+name: Security CI
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * 1" # Weekly Monday 3AM UTC
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------
+  # JOB 1: The "Free for Everyone" suite
+  # Runs on public and private repos.
+  # Includes: Gitleaks, Semgrep, Trivy
+  # ------------------------------------------------------------------
+  security-free-tier:
+    name: Base Security (Free)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # Needed to upload SARIF
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 1. Gitleaks (Secrets)
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2.3.5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: detect --source=. --report-format sarif --report-path gitleaks.sarif --no-banner
+
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+      # 2. Semgrep (SAST)
+      - name: Run Semgrep
+        run: |
+          docker run --rm -v "${PWD}:/src" returntocorp/semgrep semgrep scan \
+            --config p/default \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --exclude frontend/node_modules \
+            --exclude frontend/dist \
+            --exclude frontend/playwright-report \
+            --exclude frontend/test-results \
+            --exclude backend/rag_assistant_backend.egg-info \
+            --exclude genai-test \
+            --timeout 600 \
+            --sarif --output semgrep.sarif
+
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      # 3. Trivy (Dependencies)
+      - name: Trivy Scan (Backend)
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'backend'
+          format: 'sarif'
+          output: 'trivy-backend.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
+      - name: Trivy Scan (Frontend)
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'frontend'
+          format: 'sarif'
+          output: 'trivy-frontend.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-backend.sarif
+          category: trivy-backend
+
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-frontend.sarif
+          category: trivy-frontend
+
+  # ------------------------------------------------------------------
+  # JOB 2: The "Public Only" suite
+  # Runs only on public repos (free for OSS).
+  # Skips on private forks to prevent billing errors.
+  # Includes: CodeQL, Dependency Review
+  # ------------------------------------------------------------------
+  security-advanced:
+    name: Advanced Security (Public Only)
+    runs-on: ubuntu-latest
+    # Skip on private repositories/forks without Advanced Security
+    if: github.event.repository.private == false
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 1. CodeQL (Deep analysis)
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python, javascript
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v4
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: codeql
+
+  # Dependency Review (PRs only, public repos only)
+  dependency-review:
+    name: Dependency Review (Public Only)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.repository.private == false
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/dependency-review-action@v4
