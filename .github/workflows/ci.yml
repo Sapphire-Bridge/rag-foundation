@@ -53,7 +53,7 @@ jobs:
       - run: npm ci
       - run: npm audit --production --audit-level=high
       - run: npm run typecheck
-      - run: npm run test -- --runInBand
+      - run: npm run test
       - run: npm run build
 
   licenses:

@@ -15,10 +15,11 @@ depends_on = None
 
 
 def upgrade():
-    # Add unique constraint to stores.fs_name column
-    op.create_unique_constraint("uq_stores_fs_name", "stores", ["fs_name"])
+    # Use batch mode so SQLite can recreate the table with the constraint applied
+    with op.batch_alter_table("stores") as batch_op:
+        batch_op.create_unique_constraint("uq_stores_fs_name", ["fs_name"])
 
 
 def downgrade():
-    # Remove unique constraint
-    op.drop_constraint("uq_stores_fs_name", "stores", type_="unique")
+    with op.batch_alter_table("stores") as batch_op:
+        batch_op.drop_constraint("uq_stores_fs_name", type_="unique")
