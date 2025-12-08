@@ -67,14 +67,14 @@ def upgrade() -> None:
             {"new_id": new_id, "user_id": row.user_id, "store_id": row.store_id, "old_id": row.session_id},
         )
 
-    op.create_foreign_key(
-        "fk_chat_history_session",
-        "chat_history",
-        "chat_sessions",
-        ["session_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
+    with op.batch_alter_table("chat_history", schema=None) as batch_op:
+        batch_op.create_foreign_key(
+            "fk_chat_history_session",
+            "chat_sessions",
+            ["session_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
     op.create_index("ix_chat_history_session", "chat_history", ["session_id"])
 
 

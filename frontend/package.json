@@ -11,8 +11,8 @@
     "build": "vite build",
     "preview": "vite preview --port 5173",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --environment jsdom",
-    "test:watch": "vitest --watch --environment jsdom",
+    "test": "vitest run --environment happy-dom",
+    "test:watch": "vitest --watch --environment happy-dom",
     "e2e": "playwright test"
   },
   "dependencies": {
@@ -39,7 +39,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/coverage-v8": "^2.1.9",
     "autoprefixer": "^10.4.22",
-    "jsdom": "^27.2.0",
+    "happy-dom": "^20.0.11",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.18",
     "typescript": "^5.4.0",
