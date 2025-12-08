@@ -233,8 +233,7 @@ export function CustomizationPanel({ open, settings, saving, error, onClose, onS
             <div className="space-y-2">
               <label className="text-sm font-medium">Suggested prompts</label>
               <div className="space-y-2">
-                {[1, 2, 3].map((idx) => {
-                  const key = `suggested_prompt_${idx}` as const;
+                {(["suggested_prompt_1", "suggested_prompt_2", "suggested_prompt_3"] as const).map((key, idx) => {
                   return (
                     <input
                       key={key}
@@ -243,7 +242,7 @@ export function CustomizationPanel({ open, settings, saving, error, onClose, onS
                       maxLength={180}
                       onChange={(e) => handleChange(key, e.target.value)}
                       className="w-full px-3 py-2 rounded-md border border-input bg-background"
-                      placeholder={`Suggestion ${idx}`}
+                      placeholder={`Suggestion ${idx + 1}`}
                     />
                   );
                 })}

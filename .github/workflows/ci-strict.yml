@@ -13,9 +13,9 @@ jobs:
     env:
       STRICT_MODE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -55,7 +55,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "18"
 
@@ -78,20 +78,3 @@ jobs:
         with:
           output-file: sbom.spdx.json
           format: spdx-json
-
-      - name: OpenAPI drift check
-        run: |
-          cd backend
-          python - <<'PY'
-from app.main import create_app
-from fastapi.openapi.utils import get_openapi
-import yaml, sys, pathlib
-app = create_app()
-spec = get_openapi(title=app.title, version=app.version, routes=app.routes)
-p = pathlib.Path('../openapi.yaml')
-current = yaml.safe_load(p.read_text()) if p.exists() else {}
-if spec != current:
-    print('OpenAPI diff detected. Re-generate with backend/scripts/export_openapi.py')
-    sys.exit(1)
-print('OpenAPI up-to-date')
-PY

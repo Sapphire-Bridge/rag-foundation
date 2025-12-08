@@ -419,6 +419,81 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/chat/sessions:
+    get:
+      tags:
+      - chat
+      summary: List Chat Sessions
+      operationId: list_chat_sessions_api_chat_sessions_get
+      parameters:
+      - name: storeId
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Storeid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/chat/sessions/{session_id}/messages:
+    get:
+      tags:
+      - chat
+      summary: List Chat Messages
+      operationId: list_chat_messages_api_chat_sessions__session_id__messages_get
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/costs/summary:
     get:
       tags:
