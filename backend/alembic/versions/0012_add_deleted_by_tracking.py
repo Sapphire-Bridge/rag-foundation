@@ -22,14 +22,22 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column("deleted_by", sa.Integer(), nullable=True))
         batch_op.create_index("ix_stores_deleted_by", ["deleted_by"])
         batch_op.create_foreign_key(
-            "fk_stores_deleted_by", "users", ["deleted_by"], ["id"], ondelete="SET NULL"
+            "fk_stores_deleted_by",
+            "users",
+            ["deleted_by"],
+            ["id"],
+            ondelete="SET NULL",
         )
 
     with op.batch_alter_table("documents", schema=None) as batch_op:
         batch_op.add_column(sa.Column("deleted_by", sa.Integer(), nullable=True))
         batch_op.create_index("ix_documents_deleted_by", ["deleted_by"])
         batch_op.create_foreign_key(
-            "fk_documents_deleted_by", "users", ["deleted_by"], ["id"], ondelete="SET NULL"
+            "fk_documents_deleted_by",
+            "users",
+            ["deleted_by"],
+            ["id"],
+            ondelete="SET NULL",
         )
 
 
