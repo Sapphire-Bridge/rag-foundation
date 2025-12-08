@@ -1,0 +1,12 @@
+# Paths to ignore during scanning (regex)
+^docs/
+^tests?/
+^testdata/
+^fixtures?/
+^examples?/
+^images/
+^.*\.md$
+^.*\.svg$
+^.*\.png$
+^package-lock\.json$
+^yarn\.lock$

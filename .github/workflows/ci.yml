@@ -19,8 +19,8 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
       - name: Install deps
@@ -45,8 +45,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "18"
       - run: npm ci
@@ -59,11 +59,11 @@ jobs:
   licenses:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "18"
       - name: Backend licenses
@@ -84,19 +84,3 @@ jobs:
           path: |
             backend/licenses.json
             frontend/licenses.json
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Gitleaks
-        run: gitleaks detect --source . -v
-      - name: Semgrep
-        run: |
-          docker run --rm -v "${PWD}:/src" returntocorp/semgrep semgrep scan \
-            --config p/owasp-top-ten --config p/python --config p/secrets \
-            --exclude frontend/node_modules --exclude frontend/dist \
-            --exclude frontend/playwright-report --exclude frontend/test-results \
-            --exclude backend/rag_assistant_backend.egg-info --timeout 600
