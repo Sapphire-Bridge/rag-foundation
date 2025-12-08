@@ -3,7 +3,7 @@ name: ci-basic
 env:
   GEMINI_MOCK_MODE: "true"
   GEMINI_API_KEY: "export-mock-key"
-  JWT_SECRET: "dummy-secret"
+  JWT_SECRET: "00000000000000000000000000000000"
   DATABASE_URL: "sqlite:///./test.db"
   PYTHONUNBUFFERED: "1"
 

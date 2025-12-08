@@ -10,6 +10,7 @@ env:
   GEMINI_MOCK_MODE: "true"
   USE_GOOGLE_GENAI_STUB: "1"
   GEMINI_API_KEY: "export-mock-key"
+  JWT_SECRET: "00000000000000000000000000000000"
   DATABASE_URL: "sqlite:///./test.db"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
@@ -37,7 +38,9 @@ jobs:
           # Temporarily allow mypy to report without failing CI
           mypy . || echo "Mypy reported issues (temporarily non-fatal in CI)"
       - name: pip-audit
-        run: pip-audit -r requirements.lock --strict
+        run: |
+          python -m pip install pip-audit
+          pip-audit -r requirements.lock --strict
       - name: Tests
         run: pytest
 
