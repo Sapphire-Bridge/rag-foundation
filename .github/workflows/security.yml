@@ -30,17 +30,51 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
         with:
           fetch-depth: 0
 
-      # 1. Gitleaks (Secrets)
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2.3.5
+      # 1. Gitleaks (Secrets) — incremental on PR/push, full on schedule
+      - name: Calculate Gitleaks Commit Range
+        if: github.event_name != 'schedule'
+        id: gitleaks-range
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "range=${{ github.event.pull_request.base.sha }}..${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ]; then
+              BEFORE="${{ github.sha }}~1"
+            fi
+            echo "range=${BEFORE}..${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Gitleaks (Incremental)
+        if: github.event_name != 'schedule'
+        uses: gitleaks/gitleaks-action@f19e05d966f1890683f5960ff182f6d5a82e2e90 # v2.3.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: detect --source=. --report-format sarif --report-path gitleaks.sarif --no-banner
+          args: >-
+            detect --redact --verbose
+            --config=.gitleaks.toml
+            --log-opts="${{ steps.gitleaks-range.outputs.range }}"
+            --report-format sarif
+            --report-path gitleaks.sarif
+            --exclude-paths=config/gitleaks.exclude
+
+      - name: Gitleaks (Full History)
+        if: github.event_name == 'schedule'
+        uses: gitleaks/gitleaks-action@f19e05d966f1890683f5960ff182f6d5a82e2e90 # v2.3.5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: >-
+            detect --redact --verbose
+            --config=.gitleaks.toml
+            --log-opts="--all"
+            --report-format sarif
+            --report-path gitleaks.sarif
 
       - uses: github/codeql-action/upload-sarif@v4
         if: always()
@@ -48,7 +82,7 @@ jobs:
           sarif_file: gitleaks.sarif
           category: gitleaks
 
-      # 2. Semgrep (SAST)
+      # 2. Semgrep (SAST) — secrets handled by Gitleaks (incremental + scheduled full)
       - name: Run Semgrep
         run: |
           docker run --rm -v "${PWD}:/src" returntocorp/semgrep semgrep scan \
@@ -122,7 +156,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
 
       # 1. CodeQL (Deep analysis)
       - name: Initialize CodeQL
@@ -148,5 +182,5 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/dependency-review-action@v4
+      - uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      - uses: actions/dependency-review-action@3c4e3dcb1aa7874d2c16be7d79418e9b7efd6261 # v4.8.2

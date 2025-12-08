@@ -28,6 +28,7 @@ backend/.env
 # Additional exclusions for public repo
 .npm-cache/
 *.coverage
+/frontend/coverage/
 FULL_AUDIT_REPORT*.md
 repo-interview.md
 security_interview.md
