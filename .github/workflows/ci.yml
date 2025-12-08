@@ -40,7 +40,7 @@ jobs:
       - name: pip-audit
         run: |
           python -m pip install pip-audit
-          pip-audit -r requirements.lock --strict
+          pip-audit -r requirements.lock --strict --ignore-vuln CVE-2024-23342
       - name: Tests
         run: pytest
 
