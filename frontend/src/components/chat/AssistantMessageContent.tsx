@@ -14,7 +14,7 @@ export const AssistantMessageContent: React.FC<AssistantMessageContentProps> = (
   setActiveMessageForPanel,
 }) => {
   const messageId = useAssistantState(({ message }) => message.id);
-  const threadId = useAssistantState(({ threadListItem, thread }) => threadListItem?.id ?? thread?.id ?? "");
+  const threadId = useAssistantState(({ threadListItem }) => threadListItem?.id ?? "");
   const citations = useMemo(
     () => citationLookup(threadId, messageId),
     [citationLookup, messageId, threadId],

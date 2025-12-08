@@ -75,7 +75,7 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ settings, onOpenCustomiz
 
   const isRunning = useAssistantState(({ thread }) => thread?.isRunning ?? false);
   const currentThreadId = useAssistantState(
-    ({ thread, threadListItem }) => threadListItem?.id ?? thread?.id ?? null,
+    ({ threadListItem }) => threadListItem?.id ?? null,
   );
   const latestAssistantId = useAssistantState(({ thread }) => {
     const messages = thread?.messages ?? [];

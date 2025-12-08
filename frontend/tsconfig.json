@@ -8,7 +8,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
-    "types": ["vitest", "vite/client"]
+    "noEmit": true,
+    "types": ["vitest", "vite/client", "node"]
   },
   "include": ["src"]
 }

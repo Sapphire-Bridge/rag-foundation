@@ -68,12 +68,10 @@ describe("AdminPanel integration", () => {
 
       return new Response("Not Found", { status: 404 });
     }) as typeof globalThis.fetch;
-    // @ts-expect-error override for tests
     globalThis.fetch = fetchMock;
   });
 
   afterEach(() => {
-    // @ts-expect-error restore original
     globalThis.fetch = originalFetch;
     vi.clearAllMocks();
   });

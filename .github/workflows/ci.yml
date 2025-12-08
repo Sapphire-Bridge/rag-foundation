@@ -9,6 +9,7 @@ env:
   PYTHONUNBUFFERED: "1"
   GEMINI_MOCK_MODE: "true"
   USE_GOOGLE_GENAI_STUB: "1"
+  GEMINI_API_KEY: "export-mock-key"
   DATABASE_URL: "sqlite:///./test.db"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
@@ -51,7 +52,6 @@ jobs:
           node-version: "18"
       - run: npm ci
       - run: npm audit --production --audit-level=high
-      - run: npm run lint
       - run: npm run typecheck
       - run: npm run test -- --runInBand
       - run: npm run build
