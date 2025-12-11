@@ -5,6 +5,7 @@ import re
 import uuid
 
 import logging
+from decimal import Decimal
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Request, status
 from sqlalchemy.orm import Session
 
@@ -210,11 +211,18 @@ async def upload(
     est_tokens = estimate_tokens_from_bytes(size, content_type)
     idx_result = calc_index_cost(est_tokens)
     idx_cost = idx_result.total_cost_usd
-    if idx_cost > 0:
+    hold_amt = Decimal(str(settings.BUDGET_HOLD_USD or 0))
+    effective_cost = idx_cost + hold_amt
+    if idx_cost > 0 or hold_amt > 0:
         acquire_budget_lock(db, user.id)
-        if would_exceed_budget(db, user.id, idx_cost):
+        if would_exceed_budget(db, user.id, effective_cost):
             log_json(
-                30, "upload_budget_exceeded", user_id=user.id, store_id=storeId, estimated_cost_usd=float(idx_cost)
+                30,
+                "upload_budget_exceeded",
+                user_id=user.id,
+                store_id=storeId,
+                estimated_cost_usd=float(idx_cost),
+                hold_usd=float(hold_amt),
             )
             try:
                 os.remove(tmp_path)

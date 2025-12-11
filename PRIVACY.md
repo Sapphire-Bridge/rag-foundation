@@ -16,7 +16,7 @@ RAG Assistant is designed with privacy in mind. This document outlines what data
 ### Technical Data
 - **IP Addresses**: Stored in logs for security and rate limiting (retention depends on your log rotation policy)
 - **Redis Operational Data**: Rate-limit buckets (`ratelimit:<key>`) and revoked JWT IDs (`revoked:{jti}`) with automatic expiration (no long-term session store)
-- **Uploaded Documents**: PDF files you upload for indexing (current policy)
+- **Uploaded Documents**: Supported text/PDF/CSV/Markdown and (optionally) Office formats when enabled by the operator
 
 ## How We Use Your Data
 
@@ -41,7 +41,7 @@ RAG Assistant is designed with privacy in mind. This document outlines what data
 Log retention is controlled by the deployment environment (e.g. log rotation,
 cloud logging). The application does not enforce a fixed retention period.
 If you need a hard retention cap (e.g., 90 days), configure database cleanup
-jobs (e.g., a cron that deletes `chat_history` and `query_logs` older than 90 days).
+jobs (e.g., a cron that deletes `chat_history` and `query_logs` older than 90 days). A helper script `python -m scripts.cleanup_tmp` is available to purge stale upload temp files from `TMP_DIR`.
 
 > Redis is only used for short-lived operational data. Rate-limit counters expire automatically within ~120 seconds, and revoked JWT entries are removed as soon as the token lifetime (default 15 minutes) elapses.
 
@@ -51,6 +51,9 @@ jobs (e.g., a cron that deletes `chat_history` and `query_logs` older than 90 da
 - We send your queries and uploaded documents to Gemini API for processing
 - Subject to [Google's Privacy Policy](https://policies.google.com/privacy)
 - Documents are stored in Gemini File Search stores under your API key
+
+### Public Branding Settings
+- `/api/settings` is publicly readable to deliver theme/branding; do not store sensitive values there.
 
 ### No Other Tracking
 - We do **NOT** use analytics trackers (Google Analytics, etc.)

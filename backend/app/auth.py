@@ -36,6 +36,7 @@ if settings.REDIS_URL:
         _rev = None
 
 _revocation_warning_logged = False
+_revocation_fallback_logged = False
 
 
 def _log_revocation_degraded(reason: str) -> None:
@@ -48,6 +49,18 @@ def _log_revocation_degraded(reason: str) -> None:
         log_json(30, "auth_revocation_degraded", reason=reason)
     except Exception:
         logging.warning("JWT revocation degraded: %s", reason)
+
+
+def _log_revocation_fallback(reason: str) -> None:
+    """Log once when revocation falls back during request handling."""
+    global _revocation_fallback_logged
+    if _revocation_fallback_logged:
+        return
+    _revocation_fallback_logged = True
+    try:
+        log_json(30, "auth_revocation_fallback", reason=reason)
+    except Exception:
+        logging.warning("JWT revocation fallback: %s", reason)
 
 
 # Surface missing Redis at startup rather than per-request.
@@ -181,7 +194,7 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(get_aut
             # Propagate explicit revocation decisions
             raise
         except Exception as exc:
-            _log_revocation_degraded(f"redis error during revocation check: {exc}")
+            _log_revocation_fallback(f"redis error during revocation check: {exc}")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Revocation service unavailable; please retry shortly",
@@ -193,6 +206,8 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(get_aut
     user = db.get(User, int(user_id))
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if not getattr(user, "is_active", True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
     try:
         bind_user_context(user.id)
     except Exception:

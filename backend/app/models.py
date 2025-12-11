@@ -62,7 +62,9 @@ class Store(SoftDeleteMixin, Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     fs_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)  # Unique constraint added
-    deleted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    deleted_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="stores", foreign_keys=[user_id])
@@ -93,7 +95,9 @@ class Document(SoftDeleteMixin, Base):
     gcs_uri: Mapped[str | None] = mapped_column(String(512), nullable=True)
     gemini_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    deleted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    deleted_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     store = relationship("Store", back_populates="documents")
@@ -165,7 +169,9 @@ class ChatHistory(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"), nullable=True)
-    session_id: Mapped[str] = mapped_column(String(64), ForeignKey("chat_sessions.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False
+    )
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # user | assistant
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

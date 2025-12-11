@@ -114,10 +114,12 @@ class SseStreamError extends Error {
 const parseSseStream = ({
   response,
   onEvent,
+  onError,
   abortSignal,
 }: {
   response: Response;
   onEvent?: (event: { data: SseEventPayload }) => void;
+  onError?: (error: Error) => void;
   abortSignal: AbortSignal;
 }) => {
   const body = response.body;
@@ -258,6 +260,7 @@ const parseSseStream = ({
           if (!dataLines.length) continue;
           const payload = dataLines.join("\n").trim();
           if (!payload) continue;
+          if (payload.startsWith(":")) continue; // ignore keepalive/comments
           if (payload === "[DONE]") {
             stopReading = true;
             emitFinish();
@@ -268,10 +271,14 @@ const parseSseStream = ({
             if (isSseEventPayload(parsed)) {
               handleEvent(parsed);
             } else {
-              console.warn("Ignored non-SSE payload", parsed);
+              const err = new Error("Ignored non-SSE payload");
+              err.name = "SseParseWarning";
+              onError?.(err);
             }
           } catch {
-            console.warn("Failed to parse SSE event payload", payload);
+            const err = new Error("Failed to parse SSE event payload");
+            err.name = "SseParseWarning";
+            onError?.(err);
           }
         }
       };
@@ -370,6 +377,7 @@ class SseRuntimeAdapter implements ChatModelAdapter {
       const chunkStream = parseSseStream({
         response,
         onEvent: this.options.onEvent,
+        onError: this.options.onError,
         abortSignal,
       });
 

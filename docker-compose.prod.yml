@@ -45,11 +45,19 @@ services:
     environment:
       ENVIRONMENT: "production"
       TMP_DIR: "/tmp/rag_uploads"
+      POSTGRES_USER: "rag"
+      POSTGRES_DB: "rag"
+      POSTGRES_HOST: "db"
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       JWT_SECRET_FILE: /run/secrets/jwt_secret
-      DATABASE_URL_FILE: /run/secrets/database_url
       REDIS_URL_FILE: /run/secrets/redis_url
       GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
-    command: ["alembic", "upgrade", "head"]
+    command:
+      [
+        "/bin/sh",
+        "-c",
+        "export DATABASE_URL=postgresql+psycopg2://$${POSTGRES_USER}:$$(cat $${POSTGRES_PASSWORD_FILE})@$${POSTGRES_HOST:-db}:5432/$${POSTGRES_DB} && exec alembic upgrade head"
+      ]
     depends_on:
       db:
         condition: service_healthy
@@ -60,7 +68,7 @@ services:
       - no-new-privileges:true
     secrets:
       - jwt_secret
-      - database_url
+      - postgres_password
       - redis_url
       - gemini_api_key
     networks:
@@ -75,21 +83,19 @@ services:
       TMP_DIR: "/tmp/rag_uploads"
       REQUIRE_CSRF_HEADER: "true"
       ALLOW_DEV_LOGIN: "false"
-      ALLOW_MOCK_IN_PROD: "true"
+      GEMINI_MOCK_MODE: "false"
+      POSTGRES_USER: "rag"
+      POSTGRES_DB: "rag"
+      POSTGRES_HOST: "db"
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       JWT_SECRET_FILE: /run/secrets/jwt_secret
-      DATABASE_URL_FILE: /run/secrets/database_url
       REDIS_URL_FILE: /run/secrets/redis_url
       GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
     command:
       [
-        "gunicorn",
-        "app.main:app",
-        "--workers",
-        "4",
-        "--worker-class",
-        "uvicorn.workers.UvicornWorker",
-        "--bind",
-        "0.0.0.0:8000"
+        "/bin/sh",
+        "-c",
+        "export DATABASE_URL=postgresql+psycopg2://$${POSTGRES_USER}:$$(cat $${POSTGRES_PASSWORD_FILE})@$${POSTGRES_HOST:-db}:5432/$${POSTGRES_DB} && exec gunicorn app.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000"
       ]
     volumes:
       - uploads_tmp:/tmp/rag_uploads
@@ -105,7 +111,7 @@ services:
       - no-new-privileges:true
     secrets:
       - jwt_secret
-      - database_url
+      - postgres_password
       - redis_url
       - gemini_api_key
     networks:
@@ -125,12 +131,20 @@ services:
       ENVIRONMENT: "production"
       TMP_DIR: "/tmp/rag_uploads"
       RUN_MIGRATIONS: "false"
-      ALLOW_MOCK_IN_PROD: "true"
+      GEMINI_MOCK_MODE: "false"
+      POSTGRES_USER: "rag"
+      POSTGRES_DB: "rag"
+      POSTGRES_HOST: "db"
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       JWT_SECRET_FILE: /run/secrets/jwt_secret
-      DATABASE_URL_FILE: /run/secrets/database_url
       REDIS_URL_FILE: /run/secrets/redis_url
       GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
-    command: ["arq", "app.worker.WorkerSettings"]
+    command:
+      [
+        "/bin/sh",
+        "-c",
+        "export DATABASE_URL=postgresql+psycopg2://$${POSTGRES_USER}:$$(cat $${POSTGRES_PASSWORD_FILE})@$${POSTGRES_HOST:-db}:5432/$${POSTGRES_DB} && exec arq app.worker.WorkerSettings"
+      ]
     volumes:
       - uploads_tmp:/tmp/rag_uploads
     depends_on:
@@ -145,7 +159,7 @@ services:
       - no-new-privileges:true
     secrets:
       - jwt_secret
-      - database_url
+      - postgres_password
       - redis_url
       - gemini_api_key
     networks:
@@ -211,7 +225,5 @@ secrets:
     file: ./secrets/jwt_secret
   gemini_api_key:
     file: ./secrets/gemini_api_key
-  database_url:
-    file: ./secrets/database_url
   redis_url:
     file: ./secrets/redis_url

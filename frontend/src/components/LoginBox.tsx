@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { validatePassword } from "../utils/passwordValidation";
 
 export const LoginBox: React.FC<{ onToken: (t: string) => void }> = ({ onToken }) => {
@@ -10,20 +11,26 @@ export const LoginBox: React.FC<{ onToken: (t: string) => void }> = ({ onToken }
 
   const login = async () => {
     setStatus("Logging in…");
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: {"Content-Type":"application/json", "X-Requested-With": "XMLHttpRequest"},
-      body: JSON.stringify({ email, password })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      setStatus(`Error: ${err?.detail || res.statusText}`);
-      return;
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {"Content-Type":"application/json", "X-Requested-With": "XMLHttpRequest"},
+        body: JSON.stringify({ email, password })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setStatus(`Error: ${err?.detail || res.statusText}`);
+        return;
+      }
+      const data = await res.json();
+      sessionStorage.setItem("lastLoginEmail", email);
+      onToken(data.access_token);
+      setStatus("Logged in ✅");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Network error";
+      toast.error(`Login failed: ${msg}`);
+      setStatus(`Error: ${msg}`);
     }
-    const data = await res.json();
-    sessionStorage.setItem("lastLoginEmail", email);
-    onToken(data.access_token);
-    setStatus("Logged in ✅");
   };
 
   const register = async () => {
@@ -32,35 +39,47 @@ export const LoginBox: React.FC<{ onToken: (t: string) => void }> = ({ onToken }
       return;
     }
     setStatus("Registering…");
-    const res = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: {"Content-Type":"application/json", "X-Requested-With": "XMLHttpRequest"},
-      body: JSON.stringify({ email, password })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      setStatus(`Error: ${err?.detail || res.statusText}`);
-      return;
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: {"Content-Type":"application/json", "X-Requested-With": "XMLHttpRequest"},
+        body: JSON.stringify({ email, password })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setStatus(`Error: ${err?.detail || res.statusText}`);
+        return;
+      }
+      setStatus("Registered. You can log in now.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Network error";
+      toast.error(`Register failed: ${msg}`);
+      setStatus(`Error: ${msg}`);
     }
-    setStatus("Registered. You can log in now.");
   };
 
   const devLogin = async () => {
     setStatus("Dev token…");
-    const res = await fetch("/api/auth/token", {
-      method: "POST",
-      headers: {"Content-Type":"application/json", "X-Requested-With": "XMLHttpRequest"},
-      body: JSON.stringify({ email })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      setStatus(`Error: ${err?.detail || res.statusText}`);
-      return;
+    try {
+      const res = await fetch("/api/auth/token", {
+        method: "POST",
+        headers: {"Content-Type":"application/json", "X-Requested-With": "XMLHttpRequest"},
+        body: JSON.stringify({ email })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setStatus(`Error: ${err?.detail || res.statusText}`);
+        return;
+      }
+      const data = await res.json();
+      sessionStorage.setItem("lastLoginEmail", email);
+      onToken(data.access_token);
+      setStatus("Dev token acquired ✅");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Network error";
+      toast.error(`Dev token failed: ${msg}`);
+      setStatus(`Error: ${msg}`);
     }
-    const data = await res.json();
-    sessionStorage.setItem("lastLoginEmail", email);
-    onToken(data.access_token);
-    setStatus("Dev token acquired ✅");
   };
 
   return (

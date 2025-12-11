@@ -1,48 +1,48 @@
-#!/usr/bin/env python
+# SPDX-License-Identifier: Apache-2.0
 """
-Remove stale temp upload files to keep disk usage bounded.
+Delete temporary upload files older than TMP_MAX_AGE_HOURS.
+
+Run inside the backend container (working dir /app/backend) via:
+    python -m scripts.cleanup_tmp
 """
 
+from __future__ import annotations
+
+import logging
 import time
 from pathlib import Path
 
 from app.config import settings
-from app.db import SessionLocal
-from app.models import Document, DocumentStatus
-from app.telemetry import setup_logging
 
-logger = setup_logging()
+logger = logging.getLogger(__name__)
 
 
-def _active_docs(session):
-    return {d.id for d in session.query(Document.id).filter(Document.status == DocumentStatus.RUNNING).all()}
+def cleanup_tmp(tmp_dir: str | Path | None = None, max_age_hours: int | None = None) -> int:
+    tmp_dir = Path(tmp_dir or settings.TMP_DIR)
+    max_age_hours = max_age_hours if max_age_hours is not None else settings.TMP_MAX_AGE_HOURS
+    if max_age_hours <= 0:
+        logger.info("TMP_MAX_AGE_HOURS <= 0; skipping cleanup.")
+        return 0
 
-
-def main() -> None:
-    tmpdir = Path(settings.TMP_DIR)
-    if not tmpdir.exists():
-        logger.info("TMP_DIR missing; nothing to clean", extra={"tmp_dir": str(tmpdir)})
-        return
-
-    cutoff = time.time() - (settings.TMP_MAX_AGE_HOURS * 3600)
-    session = SessionLocal()
-    active = _active_docs(session)
+    cutoff = time.time() - (max_age_hours * 3600)
     removed = 0
+    if not tmp_dir.exists():
+        return removed
 
-    for path in tmpdir.iterdir():
-        if not path.is_file():
-            continue
+    for entry in tmp_dir.iterdir():
         try:
-            if path.stat().st_mtime > cutoff:
+            if not entry.is_file():
                 continue
-            path.unlink()
-            removed += 1
-        except Exception as exc:  # pragma: no cover - best-effort cleanup
-            logger.warning("Failed to remove temp file", extra={"path": str(path), "error": str(exc)})
-
-    session.close()
-    logger.info("Temp cleanup complete", extra={"removed": removed, "active_running_docs": len(active)})
+            mtime = entry.stat().st_mtime
+            if mtime < cutoff:
+                entry.unlink(missing_ok=True)
+                removed += 1
+        except Exception as exc:
+            logger.warning("Failed to inspect/remove %s: %s", entry, exc)
+    return removed
 
 
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level=logging.INFO)
+    deleted = cleanup_tmp()
+    logger.info("Removed %s stale temp file(s) from %s", deleted, settings.TMP_DIR)

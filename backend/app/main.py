@@ -19,7 +19,7 @@ from .telemetry import (
 )
 from .rate_limit import rate_limit_middleware
 from .metrics import metrics_endpoint
-from .db import ping_db
+from .db import ping_db, engine, SessionLocal
 from .routes import auth as auth_routes
 from .routes import stores, uploads, chat, costs, documents, admin
 from .routes import settings as settings_routes
@@ -38,6 +38,10 @@ logger = setup_logging()
 
 def create_app() -> FastAPI:
     app = FastAPI(title="RAG Assistant Backend", version="0.2.1")
+
+    # Initialize DB objects on app state for dependency injection / test overrides.
+    app.state.engine = engine
+    app.state.SessionLocal = SessionLocal
 
     @app.on_event("startup")
     async def validate_config_on_startup():
@@ -59,53 +63,6 @@ def create_app() -> FastAPI:
         except (ValueError, AssertionError) as e:
             logger.error(f"Configuration validation failed: {e}")
             raise RuntimeError(f"Invalid configuration: {e}") from e
-
-    @app.middleware("http")
-    async def _correlation_id(request: Request, call_next):
-        """Assign or propagate a request ID and ensure it reaches logs and responses."""
-        cid = request.headers.get("X-Request-ID")
-        if not cid or not re.fullmatch("[A-Za-z0-9-]{8,64}", cid):
-            cid = str(uuid.uuid4())
-
-        request.state.request_id = cid
-        ctx_token = bind_request_context(cid)
-        clear_user_context()
-        start = time.perf_counter()
-        headers = scrub_sensitive_headers(dict(request.headers))
-        try:
-            response = await call_next(request)
-            return response
-        except Exception as exc:
-            dur_ms = int((time.perf_counter() - start) * 1000)
-            log_json(
-                40,
-                "request_failed",
-                path=request.url.path,
-                method=request.method,
-                dur_ms=dur_ms,
-                error=str(exc),
-                request_headers=headers,
-            )
-            raise
-        finally:
-            try:
-                if "response" in locals():
-                    response.headers["X-Request-ID"] = cid
-                    dur_ms = int((time.perf_counter() - start) * 1000)
-                    log_json(
-                        20,
-                        "request_complete",
-                        path=request.url.path,
-                        method=request.method,
-                        status=response.status_code,
-                        dur_ms=dur_ms,
-                        request_headers=headers,
-                    )
-            finally:
-                clear_request_context(ctx_token)
-                clear_user_context()
-
-    app.middleware("http")(rate_limit_middleware)
 
     # CSRF protection via custom header requirement
     @app.middleware("http")
@@ -259,6 +216,54 @@ def create_app() -> FastAPI:
             request._stream_consumed = True  # type: ignore[attr-defined]
         return await call_next(request)
 
+    async def _correlation_id(request: Request, call_next):
+        """Assign or propagate a request ID and ensure it reaches logs and responses."""
+        cid = request.headers.get("X-Request-ID")
+        if not cid or not re.fullmatch("[A-Za-z0-9-]{8,64}", cid):
+            cid = str(uuid.uuid4())
+
+        request.state.request_id = cid
+        ctx_token = bind_request_context(cid)
+        clear_user_context()
+        start = time.perf_counter()
+        headers = scrub_sensitive_headers(dict(request.headers))
+        try:
+            response = await call_next(request)
+            return response
+        except Exception as exc:
+            dur_ms = int((time.perf_counter() - start) * 1000)
+            log_json(
+                40,
+                "request_failed",
+                path=request.url.path,
+                method=request.method,
+                dur_ms=dur_ms,
+                error=str(exc),
+                request_headers=headers,
+            )
+            raise
+        finally:
+            try:
+                if "response" in locals():
+                    response.headers["X-Request-ID"] = cid
+                    dur_ms = int((time.perf_counter() - start) * 1000)
+                    log_json(
+                        20,
+                        "request_complete",
+                        path=request.url.path,
+                        method=request.method,
+                        status=response.status_code,
+                        dur_ms=dur_ms,
+                        request_headers=headers,
+                    )
+            finally:
+                clear_request_context(ctx_token)
+                clear_user_context()
+
+    # Register rate limit middleware just inside correlation so X-Request-ID is set on 429s.
+    app.middleware("http")(rate_limit_middleware)
+    app.middleware("http")(_correlation_id)
+
     @app.exception_handler(Exception)
     async def _global_exc_handler(request, exc):
         from fastapi.responses import JSONResponse
@@ -328,12 +333,42 @@ def create_app() -> FastAPI:
             except Exception as exc:
                 logging.warning("Redis health check failed: %s", exc)
                 redis_ok = False
-        # Gemini quick probe (models.list can be heavy; we do a lightweight no-op by instantiating client)
+        # Gemini quick probe: instantiate client and attempt a lightweight call unless in mock mode.
         try:
-            rag = get_rag_client()
-            gemini_ok = True
-            if getattr(rag, "is_mock", False):
-                logging.debug("Gemini mock mode active - skipping external health probe.")
+            now_ts = time.time()
+            if now_ts - float(_gemini_health_cache.get("ts", 0)) < _gemini_health_ttl_seconds:
+                gemini_ok = bool(_gemini_health_cache.get("ok", False))
+            else:
+                rag = get_rag_client()
+                gemini_ok = True
+                if getattr(rag, "is_mock", False):
+                    logging.debug("Gemini mock mode active - skipping external health probe.")
+                else:
+                    try:
+                        # Prefer a lightweight REST probe with short timeout
+                        api_key = getattr(settings, "GEMINI_API_KEY", None)
+                        if api_key:
+                            import httpx
+
+                            url = "https://generativelanguage.googleapis.com/v1beta/models"
+                            resp = httpx.get(url, params={"pageSize": 1, "key": api_key}, timeout=2.0)
+                            if resp.status_code >= 400:
+                                raise RuntimeError(f"Gemini probe HTTP {resp.status_code}")
+                        else:
+                            models_client = getattr(getattr(rag, "client", None), "models", None)
+                            if models_client and hasattr(models_client, "list"):
+                                iterator = models_client.list(page_size=1)
+                                next(iter(iterator), None)
+                    except Exception as exc:
+                        msg = str(exc)
+                        # Avoid leaking query params/API keys in logs
+                        if isinstance(exc, Exception) and "Gemini probe HTTP" in msg:
+                            logging.warning(msg)
+                        else:
+                            logging.warning("Gemini probe failed.")
+                        gemini_ok = False
+                _gemini_health_cache["ts"] = now_ts
+                _gemini_health_cache["ok"] = gemini_ok
         except (ImportError, TypeError, ValueError, errors.APIError) as e:
             logging.warning(f"Gemini health check failed: {e}")
             gemini_ok = False
@@ -345,3 +380,5 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+_gemini_health_cache: dict[str, float | bool] = {"ts": 0.0, "ok": False}
+_gemini_health_ttl_seconds = 30

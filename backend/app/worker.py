@@ -76,11 +76,12 @@ def has_ingestion_queue() -> bool:
     return _redis_settings is not None
 
 
-async def reset_stuck_documents(_ctx):
+async def reset_stuck_documents(_ctx, session_factory=None):
     """
     Cron task to reset documents stuck in RUNNING longer than WATCHDOG_TTL_MINUTES.
     """
-    session = SessionLocal()
+    session_factory = session_factory or SessionLocal
+    session = session_factory()
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=settings.WATCHDOG_TTL_MINUTES)
     try:
         docs = (

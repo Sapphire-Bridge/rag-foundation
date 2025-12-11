@@ -4,14 +4,11 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
 
 import app.routes.chat as chat_routes
 from app.auth import get_authorization
 from app.config import settings
-from app.db import SessionLocal
-from app.main import app
-from app.models import QueryLog, Store
+from app.models import Store, User
 
 
 @pytest.fixture()
@@ -20,39 +17,39 @@ def user():
 
 
 @pytest.fixture()
-def client(user, monkeypatch):
-    app.dependency_overrides[get_authorization] = lambda: "test-token"
+def authed_client(client, user, monkeypatch):
+    client.app.dependency_overrides[get_authorization] = lambda: "test-token"
     monkeypatch.setattr(chat_routes, "get_current_user", lambda db=None, token=None: user)
-    cl = TestClient(app)
     try:
-        yield cl
+        yield client
     finally:
-        app.dependency_overrides.pop(get_authorization, None)
+        client.app.dependency_overrides.pop(get_authorization, None)
 
 
 @pytest.fixture()
-def store(user):
-    session = SessionLocal()
+def store(user, db_session):
+    # Ensure owning user exists for FK integrity
+    db_user = db_session.get(User, user.id)
+    if db_user is None:
+        db_user = User(
+            id=user.id,
+            email=f"user-{user.id}@example.com",
+            hashed_password="",
+            is_active=True,
+            email_verified=True,
+        )
+        db_session.add(db_user)
+        db_session.commit()
+
     store = Store(
         user_id=user.id,
         display_name="Metadata Store",
         fs_name=f"stores/meta-{uuid.uuid4().hex}",
     )
-    session.add(store)
-    session.commit()
-    session.refresh(store)
-    session.close()
-
-    try:
-        yield store
-    finally:
-        session = SessionLocal()
-        try:
-            session.query(QueryLog).filter(QueryLog.user_id == user.id).delete()
-            session.query(Store).filter(Store.id == store.id).delete()
-            session.commit()
-        finally:
-            session.close()
+    db_session.add(store)
+    db_session.commit()
+    db_session.refresh(store)
+    return store
 
 
 class _RecordingRag:
@@ -80,11 +77,11 @@ class _RecordingRag:
         return []
 
 
-def test_metadata_filters_rejected_when_disabled(client, store, monkeypatch):
+def test_metadata_filters_rejected_when_disabled(authed_client, store, monkeypatch):
     monkeypatch.setattr(settings, "ALLOW_METADATA_FILTERS", False)
     monkeypatch.setattr(settings, "METADATA_FILTER_ALLOWED_KEYS", ["tenant"])
 
-    resp = client.post(
+    resp = authed_client.post(
         "/api/chat",
         json={
             "question": "hello?",
@@ -97,11 +94,11 @@ def test_metadata_filters_rejected_when_disabled(client, store, monkeypatch):
     assert "Metadata filters are disabled" in resp.json()["detail"]
 
 
-def test_metadata_filters_require_allowlist(client, store, monkeypatch):
+def test_metadata_filters_require_allowlist(authed_client, store, monkeypatch):
     monkeypatch.setattr(settings, "ALLOW_METADATA_FILTERS", True)
     monkeypatch.setattr(settings, "METADATA_FILTER_ALLOWED_KEYS", [])
 
-    resp = client.post(
+    resp = authed_client.post(
         "/api/chat",
         json={
             "question": "hello?",
@@ -114,11 +111,11 @@ def test_metadata_filters_require_allowlist(client, store, monkeypatch):
     assert "METADATA_FILTER_ALLOWED_KEYS" in resp.json()["detail"]
 
 
-def test_metadata_filters_reject_complex_shapes(client, store, monkeypatch):
+def test_metadata_filters_reject_complex_shapes(authed_client, store, monkeypatch):
     monkeypatch.setattr(settings, "ALLOW_METADATA_FILTERS", True)
     monkeypatch.setattr(settings, "METADATA_FILTER_ALLOWED_KEYS", ["tenant"])
 
-    resp = client.post(
+    resp = authed_client.post(
         "/api/chat",
         json={
             "question": "hello?",
@@ -131,14 +128,14 @@ def test_metadata_filters_reject_complex_shapes(client, store, monkeypatch):
     assert "Invalid metadataFilter value" in resp.json()["detail"]
 
 
-def test_metadata_filters_allow_allowlisted_scalars(client, store, monkeypatch):
+def test_metadata_filters_allow_allowlisted_scalars(authed_client, store, monkeypatch):
     monkeypatch.setattr(settings, "ALLOW_METADATA_FILTERS", True)
     monkeypatch.setattr(settings, "METADATA_FILTER_ALLOWED_KEYS", ["tenant", "region"])
 
     rag = _RecordingRag()
     monkeypatch.setattr(chat_routes, "get_rag_client", lambda: rag)
 
-    resp = client.post(
+    resp = authed_client.post(
         "/api/chat",
         json={
             "question": "hello?",

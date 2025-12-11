@@ -3,7 +3,7 @@
 This project targets small deployments (≈20–50 users) using the existing **sync FastAPI + SQLAlchemy** stack and **Gunicorn + Uvicorn** workers.
 
 ## Quick Start (1-hour path)
-1. `cp .env.prod.example .env` and fill **JWT_SECRET**, **GEMINI_API_KEY**, **POSTGRES_PASSWORD**, **CORS_ORIGINS**.
+1. `cp .env.prod.example .env` (or `.env.example` for local) and fill **JWT_SECRET**, **GEMINI_API_KEY**, **POSTGRES_PASSWORD**, **CORS_ORIGINS**.
 2. `make up-prod` (uses `docker-compose.prod.yml`, builds images, starts db/redis/backend/worker/frontend/proxy). Default proxy host port is `8888` mapping to nginx `8080`.
 3. Create first admin: `docker-compose -f docker-compose.prod.yml exec backend python -m scripts.create_first_admin admin@example.com StrongPass123!`
 4. Verify: `docker-compose -f docker-compose.prod.yml exec backend curl http://localhost:8000/health` (200 when db/redis/gemini OK). `/metrics` should be 403 unless allowlisted in the proxy config. If you proxy `/health` through nginx, you can instead hit `http://localhost:8888/health`.
@@ -70,6 +70,39 @@ This project targets small deployments (≈20–50 users) using the existing **s
 - Redis: minimum 512 MB RAM. Enable AOF (`appendonly yes`) so rate-limit/JWT revocation survive restarts. Monitor memory eviction.
 - Worker: budget ~1 vCPU per concurrent ingestion job; scale ARQ workers accordingly.
 - Data lifecycle: back up DB via `pg_dump`/`pg_restore`. Sync uploads/archive volume (e.g., `rsync` or `gsutil rsync`) to object storage; apply lifecycle rules on the bucket to age out old copies.
+- Temp files: use `python -m scripts.cleanup_tmp` (or cron/k8s job) to purge `TMP_DIR` files older than `TMP_MAX_AGE_HOURS`.
+- DB retention: consider a nightly cron that prunes `chat_history`/`query_logs` older than N days (example):
+  ```sql
+  DELETE FROM chat_history WHERE created_at < now() - interval '90 days';
+  DELETE FROM query_logs   WHERE created_at < now() - interval '90 days';
+  ```
+  Tune to your compliance needs.
+- Cron example (k8s CronJob):
+  ```yaml
+  apiVersion: batch/v1
+  kind: CronJob
+  metadata:
+    name: cleanup-tmp
+  spec:
+    schedule: "0 3 * * *"
+    jobTemplate:
+      spec:
+        template:
+          spec:
+            restartPolicy: OnFailure
+            workingDir: /app/backend
+            volumes:
+              - name: uploads-tmp
+                persistentVolumeClaim:
+                  claimName: uploads-tmp-pvc
+            containers:
+              - name: cleanup
+                image: your-backend-image
+                command: ["python", "-m", "scripts.cleanup_tmp"]
+                volumeMounts:
+                  - name: uploads-tmp
+                    mountPath: /tmp/rag_uploads
+  ```
 
 ## Migrations
 - Apply once on new environments: `cd backend && alembic upgrade head`
@@ -80,7 +113,7 @@ This project targets small deployments (≈20–50 users) using the existing **s
 - Logs: stdout/stderr from containers (attach your log shipper as needed).
 
 ## Capacity & Limits
-- Web workers: docker-compose runs `gunicorn ... --workers 4 ...`. Each worker uses a SQLAlchemy pool sized `pool_size=10` with `max_overflow=20` (up to 120 Postgres connections across 4 workers); tune by editing `docker-compose.yml` if you need fewer/more concurrent DB connections.
+- Web workers: docker-compose runs `gunicorn ... --workers 4 ...`. Each worker uses a SQLAlchemy pool sized `pool_size=10` with `max_overflow=20` (up to 120 Postgres connections across 4 workers); tune by editing `docker-compose.yml` if you need fewer/more concurrent DB connections. Align with Postgres `max_connections` to avoid exhaustion.
 - Worker queue: ARQ `max_jobs=10` with `job_timeout=300s`; the watchdog cron runs every `WATCHDOG_CRON_MINUTES` (15 by default) to reset documents stuck longer than `WATCHDOG_TTL_MINUTES` (60). The worker requires `REDIS_URL`.
 - Rate limiting: `RATE_LIMIT_PER_MINUTE=120` per IP/user over a 60s window. With `REDIS_URL` set, limits are distributed; otherwise an in-memory fallback tracks up to ~5k principals with a 15-minute idle eviction. Set `TRUSTED_PROXY_IPS` to honor `X-Forwarded-For` behind a proxy.
 - If Redis is disabled, rate limiting falls back to in-memory storage. This memory is per-worker and resets on restart, so it is unsuitable for heavy production traffic and does not synchronize across processes.

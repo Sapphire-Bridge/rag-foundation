@@ -300,7 +300,7 @@ Always run the strict helper scripts locally before requesting review to avoid s
 
 ### Cost Tracking & Pricing
 
-- Token rates default to Gemini 2.5 Flash pricing (`0.35` input / `1.05` output / `0.13` index USD per million tokens) and the backend refuses to start in production if any rate is zero.
+- Token rates default to Gemini 2.5 Flash pricing (`0.30` input / `2.50` output / `0.0015` index USD per million tokens) and the backend refuses to start in production if any rate is zero.
 - `POST /api/upload` responses now return `estimated_tokens` and `estimated_cost_usd` so the UI can warn users before indexing charges accrue.
 - `/api/costs/summary` adds token counts plus budget information (`monthly_budget_usd`, `remaining_budget_usd`) alongside query vs indexing cost.
 - Upload and chat endpoints share the same budget enforcement helper—requests that would exceed a tenant’s monthly budget return HTTP `402`.

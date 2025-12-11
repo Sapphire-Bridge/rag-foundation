@@ -38,9 +38,10 @@ def _delete_remote_store(store_id: int, store_fs_name: str) -> None:
         )
 
 
-def _delete_remote_document(document_id: int) -> None:
+def _delete_remote_document(document_id: int, session_factory=None) -> None:
     """Best-effort cleanup for Gemini files belonging to a deleted document."""
-    db = SessionLocal()
+    session_factory = session_factory or SessionLocal
+    db = session_factory()
     try:
         doc = db.get(Document, document_id)
         if not doc or not doc.store:
@@ -82,13 +83,14 @@ def _delete_remote_document(document_id: int) -> None:
         db.close()
 
 
-def cleanup_stale_stores(*, grace_hours: int = 48, batch_size: int = 50) -> None:
+def cleanup_stale_stores(*, grace_hours: int = 48, batch_size: int = 50, session_factory=None) -> None:
     """
     Background janitor for soft-deleted or expired stores.
     Safe guardrails: grace period, batch limit, skip if active docs remain.
     """
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=grace_hours)
-    db = SessionLocal()
+    session_factory = session_factory or SessionLocal
+    db = session_factory()
     deleted = 0
     skipped = 0
     try:
