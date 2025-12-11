@@ -80,7 +80,7 @@ class Settings(BaseSettings):
 
     # Secrets
     JWT_SECRET: str = DEV_DEFAULT_JWT_SECRET
-    GEMINI_API_KEY: str
+    GEMINI_API_KEY: str | None = None
 
     # Database
     DATABASE_URL: str = "sqlite:///./rag.db"
@@ -187,14 +187,12 @@ class Settings(BaseSettings):
 
     @field_validator("GEMINI_API_KEY")
     @classmethod
-    def validate_gemini_api_key(cls, value: str, info: ValidationInfo) -> str:
+    def validate_gemini_api_key(cls, value: str | None, info: ValidationInfo) -> str | None:
+        mock_mode = bool(info.data.get("GEMINI_MOCK_MODE"))
+        if mock_mode:
+            return value
         if not value:
-            try:
-                if bool(info.data.get("GEMINI_MOCK_MODE")):
-                    return value or ""
-            except Exception:
-                pass
-            raise ValueError("GEMINI_API_KEY must be set")
+            raise ValueError("GEMINI_API_KEY must be set when GEMINI_MOCK_MODE is false")
         return value
 
     @field_validator("CORS_ORIGINS", mode="before")
