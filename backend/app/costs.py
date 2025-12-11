@@ -1,9 +1,13 @@
+import datetime
+import os
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-import datetime
+from typing import Any
+
 from fastapi import HTTPException, status
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
+
 from .config import settings
 from .models import Budget, QueryLog
 
@@ -11,7 +15,9 @@ MTOK = Decimal("1000000")
 COST_PRECISION = Decimal("0.000001")
 
 
-def _price_decimal(value: float) -> Decimal:
+def _price_decimal(value: float | Decimal) -> Decimal:
+    if isinstance(value, Decimal):
+        return value
     return Decimal(str(value))
 
 
@@ -23,27 +29,81 @@ def _quantize(value: Decimal) -> Decimal:
     return quantized
 
 
-def _resolve_model_rates(model: str) -> dict[str, float]:
+def _resolve_model_rates(model: str | None) -> dict[str, Decimal]:
     """
-    Resolve per-model pricing with fallbacks to prefix match, default entry, then legacy constants.
+    Resolve per-model pricing with deterministic prefix fallback and explicit env overrides.
     """
-    model_key = model or ""
-    mp = getattr(settings, "MODEL_PRICING", {}) or {}
-    rates = mp.get(model_key)
-    if rates is None:
-        for key, val in mp.items():
-            if key == "default":
+
+    def _as_decimal(value: float | Decimal | None, fallback: float | Decimal) -> Decimal:
+        try:
+            if value is None:
+                return _price_decimal(fallback)
+            return _price_decimal(value)
+        except Exception:
+            return _price_decimal(fallback)
+
+    def _fields_set() -> set[str]:
+        fs = getattr(settings, "model_fields_set", None)
+        if fs is None:
+            fs = getattr(settings, "__fields_set__", None)
+        return set(fs or ())
+
+    def _explicit_override(env_key: str) -> bool:
+        if env_key in _fields_set():
+            return True
+        if env_key in os.environ:
+            return True
+        if f"{env_key}_FILE" in os.environ:
+            return True
+        return False
+
+    model_key = (model or "").strip()
+    mp: dict[str, Any] = getattr(settings, "MODEL_PRICING", {}) or {}
+
+    rates: dict[str, Any] = {}
+    if model_key and model_key in mp:
+        rates = mp.get(model_key) or {}
+    elif model_key:
+        best_key = None
+        best_rates: dict[str, Any] = {}
+        for k, v in mp.items():
+            if k == "default":
                 continue
-            if model_key.startswith(key):
-                rates = val
-                break
-    if rates is None:
-        rates = mp.get("default", {})
+            if model_key.startswith(k) and (best_key is None or len(k) > len(best_key)):
+                best_key = k
+                best_rates = v or {}
+        rates = best_rates
+
+    default_rates: dict[str, Any] = mp.get("default", {}) or {}
+
+    price_fields: dict[str, tuple[str, float | Decimal]] = {
+        "input_price": ("PRICE_PER_MTOK_INPUT", settings.PRICE_PER_MTOK_INPUT),
+        "output_price": ("PRICE_PER_MTOK_OUTPUT", settings.PRICE_PER_MTOK_OUTPUT),
+        "index_price": ("PRICE_PER_MTOK_INDEX", settings.PRICE_PER_MTOK_INDEX),
+    }
+
+    def _pick(rate_key: str) -> Decimal:
+        setting_field, setting_value = price_fields[rate_key]
+
+        if rate_key in rates and rates.get(rate_key) is not None:
+            return _as_decimal(rates.get(rate_key), fallback=setting_value)
+
+        if (
+            rate_key in default_rates
+            and default_rates.get(rate_key) is not None
+            and not _explicit_override(setting_field)
+        ):
+            return _as_decimal(default_rates.get(rate_key), fallback=setting_value)
+
+        return _as_decimal(
+            getattr(settings, setting_field, setting_value),
+            fallback=default_rates.get(rate_key, setting_value),
+        )
 
     return {
-        "input_price": float(rates.get("input_price", settings.PRICE_PER_MTOK_INPUT)),
-        "output_price": float(rates.get("output_price", settings.PRICE_PER_MTOK_OUTPUT)),
-        "index_price": float(rates.get("index_price", settings.PRICE_PER_MTOK_INDEX)),
+        "input_price": _pick("input_price"),
+        "output_price": _pick("output_price"),
+        "index_price": _pick("index_price"),
     }
 
 

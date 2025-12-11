@@ -23,7 +23,7 @@ Domain Model & Persistence
 - AppSetting: key/value store with updated_at for branding/theme config.
 
 Config & Security
-- Settings enforce strict validation; STRICT_MODE true; GEMINI_MOCK_MODE true by default in dev/test; GEMINI_API_KEY required when not mock; pricing defaults input 0.35/output 1.05/index 0.13.
+- Settings enforce strict validation; STRICT_MODE true; GEMINI_MOCK_MODE true by default in dev/test; GEMINI_API_KEY required when not mock; pricing defaults input 0.30/output 2.50/index 0.0015.
 - Upload profiles: safe (default) allows {application/pdf, text/plain, text/markdown, text/csv, text/tab-separated-values}; office adds doc/docx/xls/xlsx/pptx/odt; all-supported enables full Gemini list; custom validated against GEMINI_SUPPORTED_MIMES, normalized lowercase/sorted. MAX_UPLOAD_MB=25, TMP_DIR=/tmp/rag_uploads created 0700.
 - Security gate at startup blocks unsafe production configs (no dev login, strong JWT secret, Redis required when configured, pricing >0, etc.); CSRF middleware requires X-Requested-With: XMLHttpRequest on mutating requests (except /health,/metrics).
 - Rate limiting via middleware (per IP/user) plus endpoint check_rate_limit; specific caps for chat/upload/login and admin actions.

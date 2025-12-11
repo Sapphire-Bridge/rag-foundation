@@ -141,7 +141,7 @@ class Settings(BaseSettings):
     # Cost tracking
     PRICE_PER_MTOK_INPUT: float = 0.30
     PRICE_PER_MTOK_OUTPUT: float = 2.50
-    PRICE_PER_MTOK_INDEX: float = 0.03
+    PRICE_PER_MTOK_INDEX: float = 0.0015
     MODEL_PRICING: Dict[str, Dict[str, float]] = Field(
         default_factory=lambda: {k: dict(v) for k, v in DEFAULT_MODEL_PRICING.items()}
     )

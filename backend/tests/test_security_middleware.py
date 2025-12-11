@@ -1,7 +1,6 @@
 import time
 
 import pytest
-from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from ipaddress import ip_network
@@ -42,12 +41,13 @@ def test_rate_limit_hits_limit(client: TestClient) -> None:
     limit = settings.RATE_LIMIT_PER_MINUTE
     url = "/health"
 
-    with pytest.raises(HTTPException) as excinfo:
-        for _ in range(limit + 5):
-            client.get(url)
-            time.sleep(0.01)
+    resp = None
+    for _ in range(limit + 5):
+        resp = client.get(url)
+        time.sleep(0.01)
 
-    assert excinfo.value.status_code == 429
+    assert resp is not None
+    assert resp.status_code == 429
 
     limiter.store.clear()
 
@@ -123,9 +123,8 @@ def test_rate_limit_exceeded_for_same_ip(reset_trusted_proxies) -> None:
             resp = await rate_limit_middleware(req, call_next)
             assert resp.status_code == 200
 
-        with pytest.raises(HTTPException) as excinfo:
-            await rate_limit_middleware(req, call_next)
-        assert excinfo.value.status_code == 429
+        resp = await rate_limit_middleware(req, call_next)
+        assert resp.status_code == 429
 
     asyncio.run(_exercise())
     limiter.store.clear()

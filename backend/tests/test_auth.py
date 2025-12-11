@@ -1,10 +1,6 @@
 import pytest
-from fastapi.testclient import TestClient
-from app.main import app
 from app import auth as auth_module
-
-
-client = TestClient(app)
+from app.models import User
 
 
 class _FakeRedis:
@@ -28,7 +24,7 @@ def fake_redis(monkeypatch):
     yield fake
 
 
-def _dev_token() -> str:
+def _dev_token(client) -> str:
     headers = {"X-Requested-With": "XMLHttpRequest"}
     resp = client.post("/api/auth/token", json={"email": "u@example.com"}, headers=headers)
     assert resp.status_code == 200, resp.text
@@ -41,22 +37,22 @@ def _auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "X-Requested-With": "XMLHttpRequest"}
 
 
-def test_dev_login_token():
+def test_dev_login_token(client):
     """Use dev token flow in tests to avoid password/CSRF complexity."""
-    tok = _dev_token()
+    tok = _dev_token(client)
     assert isinstance(tok, str) and len(tok) > 10
 
 
-def test_token_valid_before_revocation():
+def test_token_valid_before_revocation(client):
     """Issued tokens should work until explicitly revoked."""
-    tok = _dev_token()
+    tok = _dev_token(client)
     resp = client.get("/api/stores", headers=_auth_headers(tok))
     assert resp.status_code == 200, resp.text
 
 
-def test_revoked_token_is_rejected():
+def test_revoked_token_is_rejected(client):
     """Once logout runs, the same JWT should be rejected on future calls."""
-    tok = _dev_token()
+    tok = _dev_token(client)
     headers = _auth_headers(tok)
 
     # Initial call succeeds
@@ -70,3 +66,18 @@ def test_revoked_token_is_rejected():
     # Subsequent call is now unauthorized
     resp_revoked = client.get("/api/stores", headers=headers)
     assert resp_revoked.status_code == 401
+
+
+def test_inactive_user_is_rejected(client, db_session):
+    tok = _dev_token(client)
+    headers = _auth_headers(tok)
+    user = db_session.query(User).filter(User.email == "u@example.com").one()
+    user.is_active = False
+    db_session.commit()
+
+    resp = client.get("/api/stores", headers=headers)
+    assert resp.status_code == 403
+
+    # Restore active flag for any further operations within the same session
+    user.is_active = True
+    db_session.commit()

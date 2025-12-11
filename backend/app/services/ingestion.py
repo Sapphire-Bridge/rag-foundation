@@ -67,7 +67,8 @@ def _sanitize_error(exc: Exception | str) -> str:
     return msg[:500]
 
 
-def _log_index_cost(store: Store, document: Document) -> None:
+def _log_index_cost(store: Store, document: Document, session_factory=None) -> None:
+    session_factory = session_factory or SessionLocal
     idx_tokens = estimate_tokens_from_bytes(document.size_bytes)
     idx_cost = calc_index_cost(idx_tokens)
     if idx_cost.total_cost_usd <= 0:
@@ -75,7 +76,7 @@ def _log_index_cost(store: Store, document: Document) -> None:
 
     token_usage_total.labels(model="INDEX", type="index").inc(idx_tokens)
 
-    db = SessionLocal()
+    db = session_factory()
     try:
         db.add(
             QueryLog(
@@ -135,7 +136,7 @@ def _wait_for_operation_completion(rag, op_name: str) -> None:
         wait = min(wait * 1.5, wait_max)
 
 
-def run_ingestion_sync(store_id: int, document_id: int, local_path: str) -> None:
+def run_ingestion_sync(store_id: int, document_id: int, local_path: str, session_factory=None) -> None:
     """
     Durable ingestion job executed by the worker (synchronous core).
 
@@ -146,7 +147,8 @@ def run_ingestion_sync(store_id: int, document_id: int, local_path: str) -> None
     - poll once for operation status; set DONE/ERROR accordingly
     - log index cost and clean up temp file
     """
-    db = SessionLocal()
+    session_factory = session_factory or SessionLocal
+    db = session_factory()
     store: Optional[Store] = None
     document: Optional[Document] = None
     op_name: Optional[str] = None
@@ -299,7 +301,7 @@ def run_ingestion_sync(store_id: int, document_id: int, local_path: str) -> None
         )
 
         if document.status == DocumentStatus.DONE:
-            _log_index_cost(store, document)
+            _log_index_cost(store, document, session_factory=session_factory)
 
     except Exception as exc:
         log_json(
@@ -335,6 +337,6 @@ def run_ingestion_sync(store_id: int, document_id: int, local_path: str) -> None
         db.close()
 
 
-async def index_document_job(ctx, store_id: int, document_id: int, local_path: str) -> None:
+async def index_document_job(ctx, store_id: int, document_id: int, local_path: str, session_factory=None) -> None:
     """ARQ job wrapper: run sync ingestion logic in a worker thread."""
-    await asyncio.to_thread(run_ingestion_sync, store_id, document_id, local_path)
+    await asyncio.to_thread(run_ingestion_sync, store_id, document_id, local_path, session_factory or SessionLocal)

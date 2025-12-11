@@ -1,5 +1,7 @@
+from fastapi import Request
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
+
 from .config import settings
 
 is_sqlite = settings.DATABASE_URL.startswith("sqlite")
@@ -26,14 +28,41 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, futu
 Base = declarative_base()
 
 
-def get_db():
-    db: Session = SessionLocal()
+def create_engine_from_settings(current_settings=settings):
+    """Factory for creating an engine from settings (injectable for tests)."""
+    is_sqlite_local = current_settings.DATABASE_URL.startswith("sqlite")
+    connect_args_local = {"check_same_thread": False} if is_sqlite_local else {}
+    kwargs = {
+        "echo": False,
+        "future": True,
+        "connect_args": connect_args_local,
+    }
+    if not is_sqlite_local:
+        kwargs.update(pool_size=10, max_overflow=20, pool_pre_ping=True, pool_recycle=1800)
+    return create_engine(current_settings.DATABASE_URL, **kwargs)
+
+
+def create_session_factory(bind_engine) -> sessionmaker:
+    """Create a sessionmaker bound to the given engine."""
+    return sessionmaker(bind=bind_engine, autoflush=False, autocommit=False, future=True)
+
+
+def get_session_factory(request: Request) -> sessionmaker:
+    """Return a SessionLocal factory, preferring app.state when available."""
+    return getattr(request.app.state, "SessionLocal", SessionLocal)
+
+
+def get_db(request: Request):
+    """
+    Yield a database session.
+
+    Notes:
+    - No implicit commit to avoid holding open transactions for streaming/SSE.
+    """
+    SessionFactory = get_session_factory(request)
+    db: Session = SessionFactory()
     try:
         yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
     finally:
         db.close()
 

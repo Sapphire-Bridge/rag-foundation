@@ -7,8 +7,10 @@ from collections import defaultdict, deque
 from typing import Deque
 
 from fastapi import HTTPException, Request, status
+from fastapi.responses import JSONResponse
 
 from .config import settings
+from .telemetry import log_json
 
 try:
     import redis
@@ -99,6 +101,8 @@ class RateLimiter:
     def __init__(self, redis_client: "redis.Redis | None"):
         self._memory_limiter = InMemoryRateLimiter()
         self._redis_limiter = RedisRateLimiter(redis_client) if redis_client else None
+        self._fallback_logged = False
+        self._no_redis_logged = False
 
     @property
     def store(self):
@@ -106,14 +110,27 @@ class RateLimiter:
         return self._memory_limiter.store
 
     def check(self, key: str, limit: int, window: int) -> tuple[int, int]:
-        if self._redis_limiter:
-            try:
-                return self._redis_limiter.check(key, limit, window)
-            except HTTPException:
-                raise
-            except Exception as exc:  # Fallback if Redis is down/misconfigured
-                logging.warning("Redis rate limiting error, using in-memory fallback: %s", exc)
-        return self._memory_limiter.check(key, limit, window)
+        if self._redis_limiter is None:
+            if settings.REDIS_URL and not self._no_redis_logged:
+                self._no_redis_logged = True
+                try:
+                    log_json(30, "ratelimit_degraded", reason="redis not configured; using in-memory limiter")
+                except Exception:
+                    logging.warning("Redis not configured for rate limiting; using in-memory limiter.")
+            return self._memory_limiter.check(key, limit, window)
+
+        try:
+            return self._redis_limiter.check(key, limit, window)
+        except HTTPException:
+            raise
+        except Exception as exc:  # Fallback if Redis is down/misconfigured
+            if not self._fallback_logged:
+                self._fallback_logged = True
+                try:
+                    log_json(30, "ratelimit_degraded", reason=f"redis error: {exc}")
+                except Exception:
+                    logging.warning("Redis rate limiting error, using in-memory fallback: %s", exc)
+            return self._memory_limiter.check(key, limit, window)
 
 
 _r = None
@@ -181,7 +198,14 @@ async def rate_limit_middleware(request: Request, call_next):
     remaining = 0
     limit = settings.RATE_LIMIT_PER_MINUTE
 
-    remaining, _ = check_rate_limit(key, limit)
+    try:
+        remaining, _ = check_rate_limit(key, limit)
+    except HTTPException as exc:
+        # Return a proper response so outer middleware (correlation, etc.) can decorate it.
+        headers = exc.headers or {}
+        headers.setdefault("X-RateLimit-Limit", str(limit))
+        headers.setdefault("X-RateLimit-Remaining", "0")
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=headers)
 
     response = await call_next(request)
     # Add rate limit headers to response (best-effort)

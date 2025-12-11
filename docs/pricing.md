@@ -8,9 +8,21 @@ The defaults follow Google's public Gemini 2.5 Flash pricing (USD per million to
 
 | Meter                          | Default (`.env`) |
 | ------------------------------ | ---------------- |
-| `PRICE_PER_MTOK_INPUT`         | `0.35`           |
-| `PRICE_PER_MTOK_OUTPUT`        | `1.05`           |
-| `PRICE_PER_MTOK_INDEX`         | `0.13`           |
+| `PRICE_PER_MTOK_INPUT`         | `0.30`           |
+| `PRICE_PER_MTOK_OUTPUT`        | `2.50`           |
+| `PRICE_PER_MTOK_INDEX`         | `0.0015`         |
+
+
+## Rate Precedence
+
+Effective rates are resolved in this order:
+1. Model-specific entry in `MODEL_PRICING` (exact match, then longest-prefix match).
+2. `MODEL_PRICING["default"]` when present, unless you explicitly set the corresponding `PRICE_PER_MTOK_*` (or `*_FILE`).
+3. `PRICE_PER_MTOK_INPUT/OUTPUT/INDEX` as the final fallback.
+
+Per-field overrides apply independently, so you can override just one meter via env without touching the others.
+
+
 
 These values are baked into `app.config.Settings` so the backend refuses to start in production (or whenever `PRICE_CHECK_STRICT=true`) if any rate is missing or zero.
 

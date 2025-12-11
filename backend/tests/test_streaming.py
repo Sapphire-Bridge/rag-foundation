@@ -1,5 +1,6 @@
 import time
 
+from fastapi import Request
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
 from unittest.mock import Mock, patch, MagicMock
@@ -8,7 +9,7 @@ import app.routes.chat as chat_routes
 from app.config import settings
 from app.main import app
 from app.auth import get_current_user as real_get_current_user, get_authorization as real_get_authorization
-from app.db import get_db as real_get_db
+from app.db import get_db as real_get_db, get_session_factory as real_get_session_factory
 
 
 class TestChatStreamingResilience:
@@ -21,16 +22,18 @@ class TestChatStreamingResilience:
         app.dependency_overrides[real_get_authorization] = lambda: "test-token"
         app.dependency_overrides[real_get_current_user] = lambda: mock_user
         orig_get_current_user = chat_routes.get_current_user
-        orig_session_local = chat_routes.SessionLocal
         chat_routes.get_current_user = lambda db, token: mock_user
         mock_db = MagicMock()
-        chat_routes.SessionLocal = lambda: mock_db
         mock_db.query.return_value.filter.return_value.one_or_none.return_value = None
 
         def _ov_db():
             yield mock_db
 
+        def _ov_session_factory(request: Request):
+            return lambda: mock_db
+
         app.dependency_overrides[real_get_db] = _ov_db
+        app.dependency_overrides[real_get_session_factory] = _ov_session_factory
         try:
             mock_store = Mock(id=1, fs_name="test-store", user_id=1)
             mock_db.query.return_value.filter.return_value.all.return_value = [mock_store]
@@ -75,10 +78,10 @@ class TestChatStreamingResilience:
                     assert "world" in content
         finally:
             chat_routes.get_current_user = orig_get_current_user
-            chat_routes.SessionLocal = orig_session_local
             app.dependency_overrides.pop(real_get_authorization, None)
             app.dependency_overrides.pop(real_get_current_user, None)
             app.dependency_overrides.pop(real_get_db, None)
+            app.dependency_overrides.pop(real_get_session_factory, None)
 
     def test_chat_streaming_exhausts_retries_on_persistent_errors(self):
         """Verify streaming endpoint gives up after max retries."""
@@ -87,16 +90,18 @@ class TestChatStreamingResilience:
         app.dependency_overrides[real_get_authorization] = lambda: "test-token"
         app.dependency_overrides[real_get_current_user] = lambda: mock_user
         orig_get_current_user = chat_routes.get_current_user
-        orig_session_local = chat_routes.SessionLocal
         chat_routes.get_current_user = lambda db, token: mock_user
         mock_db = MagicMock()
-        chat_routes.SessionLocal = lambda: mock_db
         mock_db.query.return_value.filter.return_value.one_or_none.return_value = None
 
         def _ov_db2():
             yield mock_db
 
+        def _ov_session_factory(request: Request):
+            return lambda: mock_db
+
         app.dependency_overrides[real_get_db] = _ov_db2
+        app.dependency_overrides[real_get_session_factory] = _ov_session_factory
         try:
             mock_store = Mock(id=1, fs_name="test-store", user_id=1)
             mock_db.query.return_value.filter.return_value.all.return_value = [mock_store]
@@ -124,10 +129,10 @@ class TestChatStreamingResilience:
                     assert "Service temporarily unavailable" in content
         finally:
             chat_routes.get_current_user = orig_get_current_user
-            chat_routes.SessionLocal = orig_session_local
             app.dependency_overrides.pop(real_get_authorization, None)
             app.dependency_overrides.pop(real_get_current_user, None)
             app.dependency_overrides.pop(real_get_db, None)
+            app.dependency_overrides.pop(real_get_session_factory, None)
 
     def test_chat_streaming_handles_unexpected_errors(self):
         """Verify streaming endpoint handles non-retryable errors."""
@@ -136,16 +141,18 @@ class TestChatStreamingResilience:
         app.dependency_overrides[real_get_authorization] = lambda: "test-token"
         app.dependency_overrides[real_get_current_user] = lambda: mock_user
         orig_get_current_user = chat_routes.get_current_user
-        orig_session_local = chat_routes.SessionLocal
         chat_routes.get_current_user = lambda db, token: mock_user
         mock_db = MagicMock()
-        chat_routes.SessionLocal = lambda: mock_db
         mock_db.query.return_value.filter.return_value.one_or_none.return_value = None
 
         def _ov_db3():
             yield mock_db
 
+        def _ov_session_factory(request: Request):
+            return lambda: mock_db
+
         app.dependency_overrides[real_get_db] = _ov_db3
+        app.dependency_overrides[real_get_session_factory] = _ov_session_factory
         try:
             mock_store = Mock(id=1, fs_name="test-store", user_id=1)
             mock_db.query.return_value.filter.return_value.all.return_value = [mock_store]
@@ -173,10 +180,10 @@ class TestChatStreamingResilience:
                     assert "An error occurred processing your request. Please try again." in content
         finally:
             chat_routes.get_current_user = orig_get_current_user
-            chat_routes.SessionLocal = orig_session_local
             app.dependency_overrides.pop(real_get_authorization, None)
             app.dependency_overrides.pop(real_get_current_user, None)
             app.dependency_overrides.pop(real_get_db, None)
+            app.dependency_overrides.pop(real_get_session_factory, None)
 
     def test_chat_streaming_emits_keepalive(self, monkeypatch):
         """Keepalive frames should be sent when no chunks arrive for a while."""
@@ -185,16 +192,18 @@ class TestChatStreamingResilience:
         app.dependency_overrides[real_get_authorization] = lambda: "test-token"
         app.dependency_overrides[real_get_current_user] = lambda: mock_user
         orig_get_current_user = chat_routes.get_current_user
-        orig_session_local = chat_routes.SessionLocal
         chat_routes.get_current_user = lambda db, token: mock_user
         mock_db = MagicMock()
-        chat_routes.SessionLocal = lambda: mock_db
         mock_db.query.return_value.filter.return_value.one_or_none.return_value = None
 
         def _ov_db():
             yield mock_db
 
+        def _ov_session_factory(request: Request):
+            return lambda: mock_db
+
         app.dependency_overrides[real_get_db] = _ov_db
+        app.dependency_overrides[real_get_session_factory] = _ov_session_factory
 
         original_interval = settings.STREAM_KEEPALIVE_SECS
         settings.STREAM_KEEPALIVE_SECS = 0.01
@@ -238,7 +247,7 @@ class TestChatStreamingResilience:
         finally:
             settings.STREAM_KEEPALIVE_SECS = original_interval
             chat_routes.get_current_user = orig_get_current_user
-            chat_routes.SessionLocal = orig_session_local
             app.dependency_overrides.pop(real_get_authorization, None)
             app.dependency_overrides.pop(real_get_current_user, None)
             app.dependency_overrides.pop(real_get_db, None)
+            app.dependency_overrides.pop(real_get_session_factory, None)

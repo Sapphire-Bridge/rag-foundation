@@ -134,8 +134,22 @@ def scrub_sensitive_headers(headers: Dict[str, str]) -> Dict[str, str]:
     Scrub sensitive headers from request headers for safe logging.
     Replaces values of sensitive headers with [REDACTED].
     """
-    sensitive_headers = {"authorization", "cookie", "x-api-key", "x-internal-api-key"}
-    return {k: ("[REDACTED]" if k.lower() in sensitive_headers else v) for k, v in headers.items()}
+    sensitive_headers = {
+        "authorization",
+        "cookie",
+        "x-api-key",
+        "x-internal-api-key",
+        "proxy-authorization",
+        "set-cookie",
+    }
+
+    def _is_secretish(header: str) -> bool:
+        h = header.lower()
+        if h in sensitive_headers:
+            return True
+        return any(h.endswith(suffix) for suffix in ("-token", "-secret", "-key"))
+
+    return {k: ("[REDACTED]" if _is_secretish(k) else v) for k, v in headers.items()}
 
 
 def _scrub_header_fields(payload: Dict[str, object]) -> Dict[str, object]:

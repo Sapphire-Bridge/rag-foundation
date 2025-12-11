@@ -2,54 +2,58 @@ from __future__ import annotations
 
 import io
 import uuid
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
-
-from app.main import app
 from app.auth import get_current_user
 from app.config import settings
-from app.db import SessionLocal
-from app.models import Store
+from app.models import Store, User, Budget
 import app.routes.uploads as uploads_routes
 
 
-def test_upload_requires_auth():
-    c = TestClient(app)
-    r = c.post("/api/upload", headers={"X-Requested-With": "XMLHttpRequest"})
+def test_upload_requires_auth(client):
+    r = client.post("/api/upload", headers={"X-Requested-With": "XMLHttpRequest"})
     assert r.status_code == 401
 
 
 @pytest.fixture()
-def authed_client():
+def authed_client(client):
     """Provide a client with a mocked authenticated user."""
-    client = TestClient(app)
     user = SimpleNamespace(id=123)
-    app.dependency_overrides[get_current_user] = lambda: user
+    client.app.dependency_overrides[get_current_user] = lambda: user
     try:
         yield client, user
     finally:
-        app.dependency_overrides.pop(get_current_user, None)
+        client.app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.fixture()
-def store_record(authed_client):
+def store_record(authed_client, db_session):
     """Create a store for the mocked user."""
     _, user = authed_client
-    session = SessionLocal()
+    # Ensure owning user exists for FK integrity
+    db_user = db_session.get(User, user.id)
+    if db_user is None:
+        db_user = User(
+            id=user.id,
+            email=f"user-{user.id}@example.com",
+            hashed_password="",
+            is_active=True,
+            email_verified=True,
+        )
+        db_session.add(db_user)
+        db_session.commit()
+
     store = Store(
         user_id=user.id,
         display_name="Test Store",
         fs_name=f"stores/test-{uuid.uuid4().hex}",
     )
-    session.add(store)
-    session.commit()
-    session.refresh(store)
-    try:
-        yield store
-    finally:
-        session.close()
+    db_session.add(store)
+    db_session.commit()
+    db_session.refresh(store)
+    return store
 
 
 @pytest.fixture(autouse=True)
@@ -126,3 +130,47 @@ def test_pdf_magic_mismatch_is_rejected(authed_client, store_record):
         headers=_headers(),
     )
     assert resp.status_code == 415
+
+
+def test_upload_budget_hold_blocks_when_near_limit(client, db_session):
+    unique_email = f"budget+{uuid.uuid4().hex}@example.com"
+    user = User(email=unique_email, hashed_password="", is_active=True)
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    budget = Budget(user_id=user.id, monthly_limit_usd=Decimal("0.03"))
+    db_session.add(budget)
+    store = Store(user_id=user.id, display_name="Budget Store", fs_name=f"stores/test-{uuid.uuid4().hex}")
+    db_session.add(store)
+    db_session.commit()
+    db_session.refresh(store)
+
+    original_price = settings.PRICE_PER_MTOK_INDEX
+    original_hold = settings.BUDGET_HOLD_USD
+    settings.PRICE_PER_MTOK_INDEX = 1.0  # magnify cost to trigger hold logic
+    settings.BUDGET_HOLD_USD = 0.02
+
+    original_calc = uploads_routes.calc_index_cost
+
+    class _IdxResult:
+        def __init__(self, cost: Decimal):
+            self.total_cost_usd = cost
+
+    def _fake_calc_index_cost(tokens: int, model: str | None = None):
+        return _IdxResult(Decimal("0.015"))
+
+    uploads_routes.calc_index_cost = _fake_calc_index_cost
+    client.app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        resp = client.post(
+            "/api/upload",
+            data={"storeId": str(store.id)},
+            files={"file": ("big.txt", b"x" * 200000, "text/plain")},
+            headers=_headers(),
+        )
+        assert resp.status_code == 402
+    finally:
+        settings.PRICE_PER_MTOK_INDEX = original_price
+        settings.BUDGET_HOLD_USD = original_hold
+        uploads_routes.calc_index_cost = original_calc
+        client.app.dependency_overrides.pop(get_current_user, None)

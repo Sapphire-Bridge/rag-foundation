@@ -10,14 +10,14 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, Request, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from ..telemetry import log_json
 from ..config import settings
 from ..metrics import token_usage_total
 from ..services.gemini_rag import RETRYABLE_EXCEPTIONS, get_rag_client
 from ..genai import redact_llm_error
 from ..auth import get_authorization, get_current_user
-from ..db import SessionLocal, get_db
+from ..db import get_db, get_session_factory
 from ..models import QueryLog, ChatHistory, ChatSession
 from ..costs import (
     acquire_budget_lock,
@@ -90,8 +90,10 @@ class ChatRequest(BaseModel):
         return values
 
 
-def _sse_error(code: str, message: str) -> str:
+def _sse_error(code: str, message: str, status: int | None = None) -> str:
     payload = {"type": "error", "code": code, "message": message, "errorText": message}
+    if status is not None:
+        payload["status"] = status
     return f"data: {json.dumps(payload)}\n\n"
 
 
@@ -351,9 +353,10 @@ async def chat_stream(
     chat_req: ChatRequest = Body(..., description="Chat request payload"),
     authorization: str = Depends(get_authorization),
     _: None = Depends(require_pricing_configured),
+    session_factory: sessionmaker = Depends(get_session_factory),
 ):
     body = chat_req.model_dump(exclude_none=True, by_alias=True)
-    db = SessionLocal()
+    db = session_factory()
     try:
         user = get_current_user(db=db, token=authorization)
         user_id = int(getattr(user, "id"))
@@ -492,6 +495,9 @@ async def chat_stream(
         last_send = time.monotonic()
         stream_failed = False
         budget_exhausted = False
+        error_sent = False
+        last_error_code: str | None = None
+        last_error_message: str | None = None
         assistant_text_parts: list[str] = []
         completion_tokens_used = 0
         prompt_tokens_used = prompt_tokens_est
@@ -503,12 +509,23 @@ async def chat_stream(
         retry_count = 0
         sem_acquired = False
 
+        def _send_error(code: str, message: str, status_code: int | None = None) -> str:
+            nonlocal error_sent, last_error_code, last_error_message
+            error_sent = True
+            last_error_code = code
+            last_error_message = message
+            return _sse_error(code, message, status=status_code)
+
         try:
             try:
                 await asyncio.wait_for(_stream_semaphore.acquire(), timeout=2.0)
                 sem_acquired = True
             except asyncio.TimeoutError:
-                yield _sse_error("stream_capacity_exceeded", "Server is busy. Please try again.")
+                yield _send_error(
+                    "stream_capacity_exceeded",
+                    "Server is busy. Please try again.",
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
                 yield "data: [DONE]\n\n"
                 return
 
@@ -589,7 +606,12 @@ async def chat_stream(
                                         if estimated_cost > remaining_budget_usd:
                                             budget_exhausted = True
                                             stop_event.set()
-                                            yield _sse_error("budget_exceeded", "Monthly budget exceeded")
+                                            if not error_sent:
+                                                yield _send_error(
+                                                    "budget_exceeded",
+                                                    "Monthly budget exceeded",
+                                                    status.HTTP_402_PAYMENT_REQUIRED,
+                                                )
                                             last_send = time.monotonic()
                                             break
                                     yield f"data: {json.dumps({'type': 'text-delta', 'id': text_id, 'delta': text_delta})}\n\n"
@@ -620,7 +642,12 @@ async def chat_stream(
                             **redact_llm_error(e),
                         )
                         stream_failed = True
-                        yield _sse_error("upstream_unavailable", "Service temporarily unavailable. Please try again.")
+                        if not error_sent:
+                            yield _send_error(
+                                "upstream_unavailable",
+                                "Service temporarily unavailable. Please try again.",
+                                status.HTTP_503_SERVICE_UNAVAILABLE,
+                            )
                         last_send = time.monotonic()
                         break
                     log_json(
@@ -644,11 +671,39 @@ async def chat_stream(
                     )
                     stream_failed = True
                     safe_error = "An error occurred processing your request. Please try again."
-                    yield _sse_error("unexpected_error", safe_error)
+                    if not error_sent:
+                        yield _send_error("unexpected_error", safe_error, status.HTTP_500_INTERNAL_SERVER_ERROR)
                     last_send = time.monotonic()
                     break
 
+            if stream_failed and last_error_code not in (None, "budget_exceeded"):
+                failure_tags = dict(tags or {}) if tags else {}
+                failure_tags["error_code"] = last_error_code
+                log_db = session_factory()
+                try:
+                    ql = QueryLog(
+                        user_id=user_id,
+                        store_id=store_ids_for_cost[0] if store_ids_for_cost else None,
+                        prompt_tokens=prompt_tokens_used,
+                        completion_tokens=completion_tokens_used,
+                        cost_usd=Decimal("0"),
+                        model=model,
+                        project_id=project_id,
+                        tags=failure_tags or None,
+                    )
+                    log_db.add(ql)
+                    log_db.commit()
+                except Exception as e:
+                    logging.error("Failed to log failed stream cost: %s", e, exc_info=e)
+                    log_db.rollback()
+                finally:
+                    log_db.close()
+
             if stream_failed:
+                yield "data: [DONE]\n\n"
+                return
+
+            if budget_exhausted:
                 yield "data: [DONE]\n\n"
                 return
 
@@ -696,7 +751,7 @@ async def chat_stream(
                 token_usage_total.labels(model=model, type="completion").inc(completion_toks)
 
             over_budget = False
-            log_db = SessionLocal()
+            log_db = session_factory()
             try:
                 if cost_result.total_cost_usd > 0:
                     acquire_budget_lock(log_db, user_id)
@@ -741,7 +796,7 @@ async def chat_stream(
                 log_db.close()
 
             if over_budget or budget_exhausted:
-                if over_budget:
+                if not error_sent:
                     log_json(
                         30,
                         "chat_budget_exceeded_post_cost",
@@ -750,14 +805,20 @@ async def chat_stream(
                         prompt_tokens=cost_result.prompt_tokens,
                         completion_tokens=cost_result.completion_tokens,
                     )
-                yield f"data: {json.dumps({'type': 'finish'})}\n\n"
-                last_send = time.monotonic()
-                yield _sse_error("budget_exceeded", "Monthly budget exceeded")
-                last_send = time.monotonic()
+                    yield _send_error("budget_exceeded", "Monthly budget exceeded", status.HTTP_402_PAYMENT_REQUIRED)
+                    last_send = time.monotonic()
                 yield "data: [DONE]\n\n"
                 return
 
-            yield f"data: {json.dumps({'type': 'finish'})}\n\n"
+            finish_payload = {
+                "type": "finish",
+                "usage": {
+                    "prompt_tokens": prompt_toks,
+                    "completion_tokens": completion_toks,
+                    "model": model,
+                },
+            }
+            yield f"data: {json.dumps(finish_payload)}\n\n"
             last_send = time.monotonic()
             yield "data: [DONE]\n\n"
             return

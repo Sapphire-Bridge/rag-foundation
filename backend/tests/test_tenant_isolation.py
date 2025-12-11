@@ -4,55 +4,45 @@ import io
 import uuid
 from types import SimpleNamespace
 
-import pytest
-from fastapi.testclient import TestClient
-
 from app.auth import get_current_user
-from app.db import SessionLocal
-from app.main import app
-from app.models import Document, Store, DocumentStatus
+from app.models import Document, Store, DocumentStatus, User
 import app.routes.chat as chat_routes
-
-
-@pytest.fixture()
-def client():
-    return TestClient(app)
 
 
 def _headers():
     return {"Authorization": "Bearer test", "X-Requested-With": "XMLHttpRequest"}
 
 
-def _create_store(user_id: int) -> Store:
-    session = SessionLocal()
+def _create_store(db_session, user_id: int) -> Store:
+    # Ensure the owning user exists to satisfy FK constraints
+    user = db_session.get(User, user_id)
+    if user is None:
+        user = User(
+            id=user_id,
+            email=f"user-{user_id}@example.com",
+            hashed_password="",
+            is_active=True,
+            email_verified=True,
+            is_admin=False,
+        )
+        db_session.add(user)
+        db_session.commit()
+
     store = Store(
         user_id=user_id,
         display_name="Tenant Store",
         fs_name=f"stores/test-{uuid.uuid4().hex}",
     )
-    session.add(store)
-    session.commit()
-    session.refresh(store)
-    session.close()
+    db_session.add(store)
+    db_session.commit()
+    db_session.refresh(store)
     return store
 
 
-def _cleanup_store(store_id: int) -> None:
-    session = SessionLocal()
-    try:
-        store = session.get(Store, store_id)
-        if store:
-            session.query(Document).filter(Document.store_id == store_id).delete()
-            session.delete(store)
-            session.commit()
-    finally:
-        session.close()
-
-
-def test_upload_rejects_other_users_store(client):
+def test_upload_rejects_other_users_store(client, db_session):
     attacker = SimpleNamespace(id=200)
-    app.dependency_overrides[get_current_user] = lambda: attacker
-    victim_store = _create_store(user_id=999)
+    client.app.dependency_overrides[get_current_user] = lambda: attacker
+    victim_store = _create_store(db_session, user_id=999)
     try:
         resp = client.post(
             "/api/upload",
@@ -62,15 +52,13 @@ def test_upload_rejects_other_users_store(client):
         )
         assert resp.status_code == 404
     finally:
-        app.dependency_overrides.pop(get_current_user, None)
-        _cleanup_store(victim_store.id)
+        client.app.dependency_overrides.pop(get_current_user, None)
 
 
-def test_document_ops_enforce_tenant(client):
+def test_document_ops_enforce_tenant(client, db_session):
     attacker = SimpleNamespace(id=202)
-    app.dependency_overrides[get_current_user] = lambda: attacker
-    victim_store = _create_store(user_id=321)
-    session = SessionLocal()
+    client.app.dependency_overrides[get_current_user] = lambda: attacker
+    victim_store = _create_store(db_session, user_id=321)
     try:
         doc = Document(
             store_id=victim_store.id,
@@ -79,24 +67,22 @@ def test_document_ops_enforce_tenant(client):
             size_bytes=10,
             status=DocumentStatus.PENDING,
         )
-        session.add(doc)
-        session.commit()
-        session.refresh(doc)
+        db_session.add(doc)
+        db_session.commit()
+        db_session.refresh(doc)
 
         resp = client.get(f"/api/upload/op-status/doc-{doc.id}", headers=_headers())
         assert resp.status_code == 404
     finally:
-        app.dependency_overrides.pop(get_current_user, None)
-        session.close()
-        _cleanup_store(victim_store.id)
+        client.app.dependency_overrides.pop(get_current_user, None)
 
 
-def test_chat_rejects_other_users_store(client):
+def test_chat_rejects_other_users_store(client, db_session):
     attacker = SimpleNamespace(id=201)
-    app.dependency_overrides[get_current_user] = lambda: attacker
+    client.app.dependency_overrides[get_current_user] = lambda: attacker
     orig_get_current_user = chat_routes.get_current_user
     chat_routes.get_current_user = lambda db, token: attacker
-    victim_store = _create_store(user_id=1234)
+    victim_store = _create_store(db_session, user_id=1234)
     try:
         resp = client.post(
             "/api/chat",
@@ -108,6 +94,5 @@ def test_chat_rejects_other_users_store(client):
         )
         assert resp.status_code == 404
     finally:
-        app.dependency_overrides.pop(get_current_user, None)
+        client.app.dependency_overrides.pop(get_current_user, None)
         chat_routes.get_current_user = orig_get_current_user
-        _cleanup_store(victim_store.id)

@@ -2,11 +2,12 @@ import json
 import logging
 from unittest.mock import MagicMock, Mock, patch
 
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from app.auth import get_authorization as real_get_authorization
 from app.auth import get_current_user as real_get_current_user
-from app.db import get_db as real_get_db
+from app.db import get_db as real_get_db, get_session_factory as real_get_session_factory
 import app.routes.chat as chat_routes
 from app.main import app
 
@@ -57,16 +58,18 @@ def test_llm_errors_are_redacted(caplog):
     app.dependency_overrides[real_get_authorization] = lambda: "test-token"
     app.dependency_overrides[chat_routes.get_authorization] = lambda: "test-token"
     orig_get_current_user = chat_routes.get_current_user
-    orig_session_local = chat_routes.SessionLocal
     chat_routes.get_current_user = lambda db, token: mock_user
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.one_or_none.return_value = None
-    chat_routes.SessionLocal = lambda: mock_db
 
     def _ov_db():
         yield mock_db
 
+    def _ov_session_factory(request: Request):
+        return lambda: mock_db
+
     app.dependency_overrides[real_get_db] = _ov_db
+    app.dependency_overrides[real_get_session_factory] = _ov_session_factory
 
     secret_prompt = "never log this prompt text"
     mock_store = Mock(id=1, fs_name="test-store", user_id=mock_user.id)
@@ -100,11 +103,11 @@ def test_llm_errors_are_redacted(caplog):
                     )
     finally:
         chat_routes.get_current_user = orig_get_current_user
-        chat_routes.SessionLocal = orig_session_local
         app.dependency_overrides.pop(real_get_current_user, None)
         app.dependency_overrides.pop(real_get_authorization, None)
         app.dependency_overrides.pop(chat_routes.get_authorization, None)
         app.dependency_overrides.pop(real_get_db, None)
+        app.dependency_overrides.pop(real_get_session_factory, None)
 
     assert response is not None
     assert response.status_code == 200

@@ -1,48 +1,38 @@
 from __future__ import annotations
 
 import io
-from fastapi.testclient import TestClient
 
-from app.main import app
-from app.db import SessionLocal
 from app.models import Document, DocumentStatus, User
 
 
-client = TestClient(app)
-
-
-def _dev_token(email: str = "soft-delete@example.com") -> str:
+def _dev_token(client, email: str = "soft-delete@example.com") -> str:
     headers = {"X-Requested-With": "XMLHttpRequest"}
     resp = client.post("/api/auth/token", json={"email": email}, headers=headers)
     assert resp.status_code == 200, resp.text
     return resp.json()["access_token"]
 
 
-def _promote_to_admin(email: str) -> None:
+def _promote_to_admin(session, email: str) -> None:
     """Helper for tests: mark a user as admin directly in the DB."""
-    session = SessionLocal()
-    try:
-        user = session.query(User).filter(User.email == email).one_or_none()
-        if user:
-            user.is_admin = True
-            session.commit()
-    finally:
-        session.close()
+    user = session.query(User).filter(User.email == email).one_or_none()
+    if user:
+        user.is_admin = True
+        session.commit()
 
 
 def _auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "X-Requested-With": "XMLHttpRequest"}
 
 
-def _create_store(token: str, display_name: str = "Soft Delete Store") -> int:
+def _create_store(client, token: str, display_name: str = "Soft Delete Store") -> int:
     resp = client.post("/api/stores", json={"display_name": display_name}, headers=_auth_headers(token))
     assert resp.status_code == 200, resp.text
     return resp.json()["id"]
 
 
-def test_delete_store_hides_from_listing():
-    token = _dev_token("store-delete@example.com")
-    store_id = _create_store(token)
+def test_delete_store_hides_from_listing(client):
+    token = _dev_token(client, "store-delete@example.com")
+    store_id = _create_store(client, token)
 
     resp = client.delete(f"/api/stores/{store_id}", headers=_auth_headers(token))
     assert resp.status_code == 202, resp.text
@@ -53,9 +43,9 @@ def test_delete_store_hides_from_listing():
     assert store_id not in ids
 
 
-def test_upload_blocked_once_store_deleted():
-    token = _dev_token("store-upload-block@example.com")
-    store_id = _create_store(token)
+def test_upload_blocked_once_store_deleted(client):
+    token = _dev_token(client, "store-upload-block@example.com")
+    store_id = _create_store(client, token)
 
     # Delete store first
     resp = client.delete(f"/api/stores/{store_id}", headers=_auth_headers(token))
@@ -67,55 +57,46 @@ def test_upload_blocked_once_store_deleted():
     assert resp.status_code == 404
 
 
-def test_document_delete_and_restore_round_trip():
+def test_document_delete_and_restore_round_trip(client, db_session):
     email = "doc-delete@example.com"
-    token = _dev_token(email)
-    _promote_to_admin(email)
-    store_id = _create_store(token)
+    token = _dev_token(client, email)
+    _promote_to_admin(db_session, email)
+    store_id = _create_store(client, token)
 
     # Insert document directly to avoid running upload pipeline
-    session = SessionLocal()
-    try:
-        doc = Document(
-            store_id=store_id,
-            filename="doc.pdf",
-            display_name="Doc",
-            size_bytes=123,
-            status=DocumentStatus.PENDING,
-        )
-        session.add(doc)
-        session.commit()
-        session.refresh(doc)
-        doc_id = doc.id
-    finally:
-        session.close()
+    doc = Document(
+        store_id=store_id,
+        filename="doc.pdf",
+        display_name="Doc",
+        size_bytes=123,
+        status=DocumentStatus.PENDING,
+    )
+    db_session.add(doc)
+    db_session.commit()
+    db_session.refresh(doc)
+    doc_id = doc.id
+
     resp = client.delete(f"/api/documents/{doc_id}", headers=_auth_headers(token))
     assert resp.status_code == 202, resp.text
 
-    # Verify soft delete flag persisted
-    session = SessionLocal()
-    try:
-        deleted = session.get(Document, doc_id)
-        assert deleted and deleted.deleted_at is not None
-    finally:
-        session.close()
+    # Refresh state from the database; another session performed the update
+    db_session.expire_all()
+    deleted = db_session.get(Document, doc_id)
+    assert deleted and deleted.deleted_at is not None
 
     resp = client.post(f"/api/documents/{doc_id}/restore", headers=_auth_headers(token))
     assert resp.status_code == 200, resp.text
 
-    session = SessionLocal()
-    try:
-        restored = session.get(Document, doc_id)
-        assert restored and restored.deleted_at is None
-    finally:
-        session.close()
+    db_session.expire_all()
+    restored = db_session.get(Document, doc_id)
+    assert restored and restored.deleted_at is None
 
 
-def test_store_restore_makes_store_visible_again():
+def test_store_restore_makes_store_visible_again(client, db_session):
     email = "store-restore@example.com"
-    token = _dev_token(email)
-    _promote_to_admin(email)
-    store_id = _create_store(token)
+    token = _dev_token(client, email)
+    _promote_to_admin(db_session, email)
+    store_id = _create_store(client, token)
 
     resp = client.delete(f"/api/stores/{store_id}", headers=_auth_headers(token))
     assert resp.status_code == 202
