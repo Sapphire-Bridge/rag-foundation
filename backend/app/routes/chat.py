@@ -770,10 +770,11 @@ async def chat_stream(
                 try:
                     log_db.add(ql)
                     log_db.commit()
-                except Exception as e:
+                except Exception:
                     logging.error(
-                        f"Failed to log query cost for user {user_id}: {e}",
-                        exc_info=e,
+                        "Failed to log query cost for user %s",
+                        user_id,
+                        exc_info=True,
                         extra={
                             "user_id": user_id,
                             "cost": float(cost_result.total_cost_usd),
