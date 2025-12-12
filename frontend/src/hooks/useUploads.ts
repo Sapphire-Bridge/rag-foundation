@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { secureRandomId } from "../utils/ids";
 import type { PendingUpload } from "../types";
 
 const MAX_PARALLEL_UPLOADS = 3;
@@ -35,7 +36,7 @@ export const useUploads = ({
 
   const uploadFile = useCallback(
     async (file: File) => {
-      const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const id = `upload-${secureRandomId()}`;
       setPendingUploads((prev) => [...prev, { id, name: file.name, status: "uploading" }]);
       if (!storeId || !token) {
         setPendingUploads((prev) =>

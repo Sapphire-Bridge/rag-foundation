@@ -3,6 +3,7 @@ import type { TextMessagePart, ThreadMessage, ThreadUserMessagePart, ThreadMessa
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { ThreadEventsReset } from "../components/chat/ThreadEventsReset";
 import type { Citation } from "../components/CitationPanel";
+import { secureRandomId } from "../utils/ids";
 import { useSseRuntime } from "../useSseRuntime";
 import { useStoreContext } from "./StoreContext";
 import { toast } from "sonner";
@@ -62,10 +63,7 @@ const extractUserMessageText = (message: ThreadMessage | undefined | null) => {
     .trim();
 };
 
-const generateSessionId = () => {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-  return `session-${Math.random().toString(36).slice(2, 10)}-${Date.now()}`;
-};
+const generateSessionId = () => secureRandomId();
 
 export const ChatProvider: React.FC<{
   token: string;

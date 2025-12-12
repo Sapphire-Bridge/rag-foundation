@@ -8,9 +8,18 @@ regexes = [
     "GEMINI_MOCK_MODE",
     "USE_GENAI_STUB"
 ]
-
-[ignore]
-files = [
+paths = [
+    "^docs/",
+    "^tests?/",
+    "^testdata/",
+    "^fixtures?/",
+    "^examples?/",
+    "^images/",
+    "^.*\\.md$",
+    "^.*\\.svg$",
+    "^.*\\.png$",
+    "^package-lock\\.json$",
+    "^yarn\\.lock$",
     "^frontend/package-lock\\.json$",
     "^backend/requirements\\.lock$",
     "^frontend/dist/.*",
