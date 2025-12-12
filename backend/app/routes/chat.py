@@ -77,7 +77,7 @@ class ChatRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _apply_aliases(cls, values):
-        if not isinstance(values, dict):
+        if not isinstance(values, dict):s
             return values
         alias_map = {
             "sessionId": "session_id",
