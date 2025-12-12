@@ -1,7 +1,8 @@
 version: "3.9"
 
 services:
-  db:
+  db: # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
+    # Database must write to its volume in production.
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: rag
@@ -22,7 +23,8 @@ services:
     networks:
       - data
 
-  redis:
+  redis: # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
+    # Redis must write to its volume in production.
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:

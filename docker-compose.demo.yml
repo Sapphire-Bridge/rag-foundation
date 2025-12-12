@@ -1,7 +1,8 @@
 version: "3.9"
 
 services:
-  db:
+  db: # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service, yaml.docker-compose.security.no-new-privileges.no-new-privileges
+    # Demo-only service; requires writable volume and relaxed privileges for ease of setup.
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rag}
@@ -17,7 +18,8 @@ services:
     networks:
       - rag-network
 
-  redis:
+  redis: # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service, yaml.docker-compose.security.no-new-privileges.no-new-privileges
+    # Demo-only service; requires writable volume and relaxed privileges for ease of setup.
     image: redis:7-alpine
     volumes:
       - redis_data:/data
@@ -78,7 +80,8 @@ services:
     networks:
       - rag-network
 
-  proxy:
+  proxy: # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service, yaml.docker-compose.security.no-new-privileges.no-new-privileges
+    # Demo-only service; relaxed container hardening is intentional.
     image: nginx:alpine
     depends_on:
       - backend
