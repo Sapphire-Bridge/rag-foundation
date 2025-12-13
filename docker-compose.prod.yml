@@ -1,9 +1,6 @@
-version: "3.9"
-
 services:
-  # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
   db:
-    # Database must write to its volume in production.
+    # Database persists data to a named volume; keep root filesystem read-only.
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: rag
@@ -19,14 +16,17 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
     secrets:
       - postgres_password
     networks:
       - data
 
-  # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
   redis:
-    # Redis must write to its volume in production.
+    # Redis persists data to a named volume; keep root filesystem read-only.
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -39,6 +39,10 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run
     networks:
       - data
 

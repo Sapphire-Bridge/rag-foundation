@@ -1,12 +1,13 @@
-version: "3.9"
-
 services:
-  # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
   db:
-    # Demo-only service; requires writable volume for ease of setup.
+    # Demo-only service; keep root filesystem read-only and persist data to a named volume.
     image: postgres:16-alpine
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rag}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_demo_password}
@@ -21,12 +22,15 @@ services:
     networks:
       - rag-network
 
-  # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
   redis:
-    # Demo-only service; requires writable volume for ease of setup.
+    # Demo-only service; keep root filesystem read-only and persist data to a named volume.
     image: redis:7-alpine
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -86,12 +90,16 @@ services:
     networks:
       - rag-network
 
-  # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
   proxy:
-    # Demo-only proxy; relaxed container hardening is acceptable here.
+    # Demo-only proxy; keep root filesystem read-only (tmpfs for runtime state).
     image: nginx:alpine
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
     depends_on:
       - backend
       - frontend

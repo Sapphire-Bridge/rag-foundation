@@ -1,0 +1,10 @@
+# Semgrep OSS ignore list.
+#
+# Keep this file small and risk-based: prefer fixing findings in production code.
+
+# Test suites (low signal for SARIF/code-scanning gating).
+backend/tests/
+frontend/tests/
+
+# Vite dev entrypoint: local assets (not CDN) trigger a false-positive SRI finding.
+frontend/index.html
