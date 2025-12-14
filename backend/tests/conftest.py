@@ -284,9 +284,12 @@ def no_sleep(monkeypatch):
 def _patch_module_sleep(monkeypatch, module_path: str):
     """Patch sleep in a module if it exists."""
     try:
-        import importlib
-
-        mod = importlib.import_module(module_path)
+        if module_path == "app.services.ingestion":
+            import app.services.ingestion as mod
+        elif module_path == "app.routes.chat":
+            import app.routes.chat as mod
+        else:
+            return
         if hasattr(mod, "time"):
             monkeypatch.setattr(
                 mod.time,
