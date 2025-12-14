@@ -90,10 +90,8 @@ class ChatRequest(BaseModel):
         return values
 
 
-def _sse_error(code: str, message: str, status: int | None = None, request_id: str | None = None) -> str:
+def _sse_error(code: str, message: str, status: int | None = None) -> str:
     payload = {"type": "error", "code": code, "message": message, "errorText": message}
-    if request_id:
-        payload["request_id"] = request_id
     if status is not None:
         payload["status"] = status
     return f"data: {json.dumps(payload)}\n\n"
@@ -360,7 +358,6 @@ async def chat_stream(
     session_factory: sessionmaker = Depends(get_session_factory),
 ):
     body = chat_req.model_dump(exclude_none=True, by_alias=True)
-    request_id = getattr(getattr(req, "state", None), "request_id", None)
     db = session_factory()
     try:
         user = get_current_user(db=db, token=authorization)
@@ -519,7 +516,7 @@ async def chat_stream(
             error_sent = True
             last_error_code = code
             last_error_message = message
-            return _sse_error(code, message, status=status_code, request_id=request_id)
+            return _sse_error(code, message, status=status_code)
 
         try:
             try:
@@ -699,11 +696,7 @@ async def chat_stream(
                     log_db.add(ql)
                     log_db.commit()
                 except Exception as e:
-                    logging.error(
-                        "Failed to log failed stream cost",
-                        exc_info=True,
-                        extra={"error": str(e)},
-                    )
+                    logging.error("Failed to log failed stream cost: %s", e, exc_info=e)
                     log_db.rollback()
                 finally:
                     log_db.close()
@@ -716,7 +709,7 @@ async def chat_stream(
                 yield "data: [DONE]\n\n"
                 return
 
-            yield f"data: {json.dumps({'type': 'text-end', 'id': text_id, 'request_id': request_id})}\n\n"
+            yield f"data: {json.dumps({'type': 'text-end', 'id': text_id})}\n\n"
             last_send = time.monotonic()
 
             if final_resp is not None and not budget_exhausted:
@@ -782,7 +775,8 @@ async def chat_stream(
                     log_db.commit()
                 except Exception:
                     logging.error(
-                        "Failed to log query cost",
+                        "Failed to log query cost for user %s",
+                        user_id,
                         exc_info=True,
                         extra={
                             "user_id": user_id,
@@ -822,7 +816,6 @@ async def chat_stream(
 
             finish_payload = {
                 "type": "finish",
-                "request_id": request_id,
                 "usage": {
                     "prompt_tokens": prompt_toks,
                     "completion_tokens": completion_toks,
