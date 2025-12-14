@@ -137,6 +137,8 @@ def _build_history_prompt(messages: list[dict]) -> tuple[str | None, str | None]
         if not text:
             continue
         role = str(msg.get("role") or "").lower()
+        if role not in {"user", "assistant", "model"}:
+            continue
         label = ROLE_LABELS.get(role, role.title() or "User")
         lines.append(f"{label}: {text}")
         if role == "user":
@@ -529,9 +531,9 @@ async def chat_stream(
                 yield "data: [DONE]\n\n"
                 return
 
-            yield f"data: {json.dumps({'type': 'start', 'messageId': message_id})}\n\n"
+            yield f"data: {json.dumps({'type': 'start', 'messageId': message_id, 'request_id': request_id})}\n\n"
             last_send = time.monotonic()
-            yield f"data: {json.dumps({'type': 'text-start', 'id': text_id})}\n\n"
+            yield f"data: {json.dumps({'type': 'text-start', 'id': text_id, 'request_id': request_id})}\n\n"
             last_send = time.monotonic()
 
             while retry_count <= max_retries:
@@ -614,7 +616,7 @@ async def chat_stream(
                                                 )
                                             last_send = time.monotonic()
                                             break
-                                    yield f"data: {json.dumps({'type': 'text-delta', 'id': text_id, 'delta': text_delta})}\n\n"
+                                    yield f"data: {json.dumps({'type': 'text-delta', 'id': text_id, 'delta': text_delta, 'request_id': request_id})}\n\n"
                                     last_send = time.monotonic()
                                     assistant_text_parts.append(text_delta)
                                 if getattr(data, "candidates", None):
@@ -719,6 +721,7 @@ async def chat_stream(
                         "title": c.get("title") or c.get("uri") or "Source",
                         "snippet": c.get("snippet"),
                     }
+                    payload["request_id"] = request_id
                     yield f"data: {json.dumps(payload)}\n\n"
                     last_send = time.monotonic()
 
