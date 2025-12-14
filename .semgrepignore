@@ -1,0 +1,6 @@
+# Semgrep OSS ignore list.
+#
+# False-positive: `html.security.audit.missing-integrity.missing-integrity` flags the
+# inline `data:` favicon in `frontend/index.html`, but SRI is not applicable to
+# `rel="icon"` resources and the browser is not fetching a remote asset.
+frontend/index.html

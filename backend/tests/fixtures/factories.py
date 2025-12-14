@@ -8,6 +8,7 @@ Rules:
 """
 
 from decimal import Decimal
+import secrets
 from sqlalchemy.orm import Session
 
 from app.models import User, Store, Budget, Document, DocumentStatus, ChatSession, ChatHistory
@@ -25,17 +26,18 @@ class UserFactory:
         db: Session,
         *,
         email: str | None = None,
-        password: str = "TestPass123!",
+        password: str | None = None,
         is_admin: bool = False,
         is_active: bool = True,
         hashed_password: str | None = None,
     ) -> User:
         cls._counter += 1
         email = email or f"test-user-{cls._counter}@example.com"
+        password_to_use = password if password is not None else f"TestPass-{secrets.token_urlsafe(12)}!"
 
         user = User(
             email=email.lower(),
-            hashed_password=hashed_password if hashed_password is not None else hash_password(password),
+            hashed_password=hashed_password if hashed_password is not None else hash_password(password_to_use),
             is_admin=is_admin,
             is_active=is_active,
             email_verified=True,
