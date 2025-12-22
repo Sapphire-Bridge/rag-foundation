@@ -104,7 +104,7 @@ jobs:
 
       # 3. Trivy (Dependencies)
       - name: Trivy Scan (Backend)
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           scan-type: 'fs'
           scan-ref: 'backend'
@@ -114,7 +114,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Trivy Scan (Frontend)
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@0.33.1
         continue-on-error: true
         with:
           scan-type: 'fs'
