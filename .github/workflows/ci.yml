@@ -39,7 +39,9 @@ jobs:
       - name: pip-audit
         run: |
           python -m pip install pip-audit
-          pip-audit -r requirements.lock --strict --ignore-vuln CVE-2024-23342 --ignore-vuln CVE-2026-21441
+          # python-ecdsa Minerva timing attack (CVE-2024-23342 / GHSA-wj6h-64fc-37mp)
+          # Safe to ignore here: this service uses HS256 JWT (no ECDSA signing); ecdsa is only transitive.
+          pip-audit -r requirements.lock --strict --ignore-vuln CVE-2024-23342 --ignore-vuln GHSA-wj6h-64fc-37mp --ignore-vuln CVE-2026-21441
       - name: Tests
         run: pytest
 
