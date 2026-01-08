@@ -10,6 +10,9 @@ venv/
 .env
 .env.*
 *.db
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 
 # Node
 frontend/node_modules*/
