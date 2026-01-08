@@ -283,6 +283,8 @@ def no_sleep(monkeypatch):
 
 def _patch_module_sleep(monkeypatch, module_path: str):
     """Patch sleep in a module if it exists."""
+    if module_path not in {"app.services.ingestion", "app.routes.chat"}:
+        return
     try:
         if module_path == "app.services.ingestion":
             import app.services.ingestion as ingestion_mod
