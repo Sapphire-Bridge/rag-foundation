@@ -1168,6 +1168,16 @@ components:
             type: array
           - type: 'null'
           title: Messages
+        system:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: System
+        tools:
+          anyOf:
+          - {}
+          - type: 'null'
+          title: Tools
         sessionId:
           anyOf:
           - type: string
