@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 from fastapi import APIRouter, Body, Request, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.responses import StreamingResponse
@@ -52,48 +52,62 @@ ALLOWED_MODELS = {
 _SAFE_METADATA_VALUE_TYPES = (str, int, float, bool)
 
 
+class StreamBackpressureError(RuntimeError):
+    """Raised when the client cannot keep up with streamed output."""
+
+
 class ChatRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(extra="ignore")
 
     question: Optional[str] = None
     messages: Optional[List[Dict[str, Any]]] = None
-    session_id: Optional[str] = None
-    thread_id: Optional[str] = None
-    store_ids: List[int] = Field(
+    system: Optional[str] = None
+    tools: Optional[Any] = None
+    sessionId: Optional[str] = None
+    threadId: Optional[str] = None
+    storeIds: List[int] = Field(
         ...,
         min_length=1,
-        alias="storeIds",
         description="List of store IDs to query against.",
     )
-    project_id: Optional[Any] = None
+    projectId: Optional[Any] = None
     tags: Optional[Dict[str, Any]] = None
-    metadata_filter: Optional[Dict[str, Any]] = Field(
+    metadataFilter: Optional[Dict[str, Any]] = Field(
         default=None,
-        alias="metadataFilter",
         description="Optional metadata filter applied server-side.",
     )
     model: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
-    def _apply_aliases(cls, values):
+    def _apply_aliases(cls, values: Any) -> Any:
         if not isinstance(values, dict):
             return values
         alias_map = {
-            "sessionId": "session_id",
-            "threadId": "thread_id",
-            "projectId": "project_id",
+            "session_id": "sessionId",
+            "thread_id": "threadId",
+            "store_ids": "storeIds",
+            "project_id": "projectId",
+            "metadata_filter": "metadataFilter",
         }
-        for alias, target in alias_map.items():
-            if alias in values and target not in values:
-                values[target] = values[alias]
+        used: list[str] = []
+        for source, target in alias_map.items():
+            if source in values and target in values:
+                raise ValueError(f"Provide either '{target}' or '{source}', not both.")
+            if source in values and target not in values:
+                values[target] = values[source]
+                used.append(source)
+        if used and settings.ENVIRONMENT in {"staging", "production"}:
+            log_json(30, "chat_request_snake_case_deprecated", keys=sorted(used))
         return values
 
 
-def _sse_error(code: str, message: str, status: int | None = None) -> str:
-    payload = {"type": "error", "code": code, "message": message, "errorText": message}
+def _sse_error(code: str, message: str, status: int | None = None, retry_after_ms: int | None = None) -> str:
+    payload: dict[str, Any] = {"type": "error", "code": code, "message": message, "errorText": message}
     if status is not None:
         payload["status"] = status
+    if retry_after_ms is not None:
+        payload["retryAfterMs"] = max(0, int(retry_after_ms))
     return f"data: {json.dumps(payload)}\n\n"
 
 
@@ -152,6 +166,70 @@ def _build_history_prompt(messages: list[dict]) -> tuple[str | None, str | None]
     return transcript, last_user
 
 
+def _normalize_gemini_role(role: Any) -> str:
+    r = str(role or "").lower()
+    if r in {"assistant", "model"}:
+        return "model"
+    return "user"
+
+
+def _messages_to_gemini_contents(messages: list[dict]) -> list[dict[str, Any]]:
+    contents: list[dict[str, Any]] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        text = _extract_message_text(msg)
+        if not text:
+            continue
+        contents.append({"role": _normalize_gemini_role(msg.get("role")), "parts": [{"text": text}]})
+    return contents
+
+
+def _trim_gemini_contents(contents: list[dict[str, Any]], max_chars: int) -> list[dict[str, Any]]:
+    """
+    Keep the most recent content under a char budget, truncating only the oldest
+    included message if needed.
+    """
+    if max_chars <= 0 or not contents:
+        return []
+
+    kept_reversed: list[dict[str, Any]] = []
+    remaining = max_chars
+    for item in reversed(contents):
+        parts = item.get("parts") if isinstance(item, dict) else None
+        text = None
+        if isinstance(parts, list) and parts and isinstance(parts[0], dict):
+            text = parts[0].get("text")
+        if not isinstance(text, str):
+            text = str(text or "")
+        if len(text) <= remaining:
+            kept_reversed.append(item)
+            remaining -= len(text)
+            continue
+        if remaining <= 0:
+            break
+        role = item.get("role") if isinstance(item, dict) else None
+        kept_reversed.append({"role": _normalize_gemini_role(role), "parts": [{"text": text[-remaining:]}]})
+        remaining = 0
+        break
+
+    kept_reversed.reverse()
+    return kept_reversed
+
+
+def _estimate_tokens_from_gemini_contents(contents: list[dict[str, Any]]) -> int:
+    total = 0
+    for item in contents:
+        parts = item.get("parts") if isinstance(item, dict) else None
+        text = None
+        if isinstance(parts, list) and parts and isinstance(parts[0], dict):
+            text = parts[0].get("text")
+        if not isinstance(text, str):
+            text = str(text or "")
+        total += _estimate_tokens_from_text(text)
+    return total
+
+
 def _estimate_tokens_from_text(text: str) -> int:
     """
     Crude token estimate used for budgeting when the upstream SDK does not
@@ -163,13 +241,13 @@ def _estimate_tokens_from_text(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def _sanitize_tags(raw) -> dict | None:
+def _sanitize_tags(raw: Any) -> dict[str, str] | None:
     if raw is None:
         return None
     if not isinstance(raw, dict):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="tags must be an object")
 
-    cleaned = {}
+    cleaned: dict[str, str] = {}
     for key, value in raw.items():
         if len(cleaned) >= 5:
             break
@@ -251,7 +329,7 @@ def _validate_metadata_filter(raw: Any) -> dict[str, Any] | None:
     return cleaned
 
 
-def _sanitize_session_id(raw) -> str:
+def _sanitize_session_id(raw: Any) -> str:
     if not raw:
         return str(uuid.uuid4())
     if not isinstance(raw, str):
@@ -354,38 +432,53 @@ async def chat_stream(
     authorization: str = Depends(get_authorization),
     _: None = Depends(require_pricing_configured),
     session_factory: sessionmaker = Depends(get_session_factory),
-):
+) -> StreamingResponse:
     body = chat_req.model_dump(exclude_none=True, by_alias=True)
     db = session_factory()
     try:
         user = get_current_user(db=db, token=authorization)
         user_id = int(getattr(user, "id"))
-        messages = chat_req.messages or []
-        session_id = _sanitize_session_id(chat_req.session_id or chat_req.thread_id)
-        store_ids = list(getattr(chat_req, "store_ids", []) or [])
+        raw_messages = chat_req.messages
+        has_messages = raw_messages is not None
+        messages = raw_messages or []
+        session_id = _sanitize_session_id(chat_req.sessionId or chat_req.threadId)
+        store_ids = list(chat_req.storeIds)
         stores = require_stores_owned_by_user(db, store_ids, user_id)
-        store_refs = [{"id": s.id, "fs_name": s.fs_name} for s in stores]
-        store_id_for_history = store_refs[0]["id"] if store_refs else None
-        store_ids_for_cost = [s["id"] for s in store_refs]
-        fs_names = [s["fs_name"] for s in store_refs]
+        store_ids_for_cost: list[int] = [s.id for s in stores]
+        fs_names: list[str] = [s.fs_name for s in stores]
+        store_id_for_history: int | None = store_ids_for_cost[0] if store_ids_for_cost else None
 
-        # Accept AssistantUI payload with messages OR our QueryRequest shape
-        question = chat_req.question
-        history_rows = _load_chat_history(db, user_id, session_id, store_id_for_history)
-        history_messages = [{"role": row.role, "text": row.content} for row in history_rows]
-        combined_messages = history_messages + messages
-        history_prompt, last_user_text = _build_history_prompt(combined_messages) if combined_messages else (None, None)
+        # Accept AssistantUI payload with messages OR our QueryRequest shape.
+        # `user_question` is the new prompt from the client; `question` is what we send to the model.
+        user_question: Any = chat_req.question
+        extracted_user_index: int | None = None
+        prompt_history_messages: list[dict] = []
 
-        if not question and messages:
-            question = _extract_message_text(messages[-1] or {})
-        if not question and last_user_text:
-            question = last_user_text
-        if history_prompt:
-            question = (
-                f"{history_prompt}\n\nAssistant, respond to the latest User message using the conversation above."
-            )
+        if has_messages and messages:
+            last_user_text = None
+            # Prefer the latest explicit user-role message from AssistantUI payloads.
+            for idx in range(len(messages) - 1, -1, -1):
+                msg = messages[idx]
+                if not isinstance(msg, dict):
+                    continue
+                if str(msg.get("role") or "").lower() != "user":
+                    continue
+                extracted = _extract_message_text(msg)
+                if extracted:
+                    extracted_user_index = idx
+                    last_user_text = extracted
+                    break
+            if not user_question:
+                if last_user_text:
+                    user_question = last_user_text
+                else:
+                    user_question = _extract_message_text(messages[-1] or {})
+                    extracted_user_index = len(messages) - 1 if messages else None
+        elif not has_messages:
+            history_rows = _load_chat_history(db, user_id, session_id, store_id_for_history)
+            prompt_history_messages = [{"role": row.role, "text": row.content} for row in history_rows]
 
-        if not question:
+        if not user_question:
             try:
                 # Log limited diagnostics without user content
                 last_keys = list((messages or [{}])[-1].keys()) if messages else []
@@ -394,22 +487,45 @@ async def chat_stream(
                 pass
             raise HTTPException(status_code=400, detail="Missing question")
 
-        if not isinstance(question, str):
+        if not isinstance(user_question, str):
             try:
-                log_json(30, "chat_question_type_coerced", user_id=user_id, original_type=type(question).__name__)
+                log_json(
+                    30,
+                    "chat_question_type_coerced",
+                    user_id=user_id,
+                    original_type=type(user_question).__name__,
+                )
             except Exception:
                 pass
-            question = str(question)
+            user_question = str(user_question)
 
-        if len(question) > MAX_QUESTION_LENGTH:
+        if len(user_question) > MAX_QUESTION_LENGTH:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Question too long (max {MAX_QUESTION_LENGTH} characters)",
             )
 
+        if has_messages:
+            # When the request includes `messages`, treat them as the source of truth for prior context.
+            # Exclude the extracted "current" user turn (if any) so we can always append the full
+            # `user_question` without duplication/truncation.
+            prompt_history_messages = messages[:extracted_user_index] if extracted_user_index is not None else messages
+
+        system_prompt = chat_req.system.strip() if isinstance(chat_req.system, str) else ""
+        if not system_prompt:
+            system_prompt = ""
+
+        history_budget = MAX_QUESTION_LENGTH - len(user_question) - len(system_prompt)
+        history_contents = _messages_to_gemini_contents(prompt_history_messages)
+        trimmed_history = _trim_gemini_contents(history_contents, history_budget)
+        contents: list[dict[str, Any]] = [
+            *trimmed_history,
+            {"role": "user", "parts": [{"text": user_question}]},
+        ]
+
         check_rate_limit(f"user:{user_id}:chat", settings.CHAT_RATE_LIMIT_PER_MINUTE)
 
-        project_id = getattr(chat_req, "project_id", None)
+        project_id = getattr(chat_req, "projectId", None)
         if project_id is not None:
             try:
                 project_id = int(project_id)
@@ -417,7 +533,7 @@ async def chat_stream(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="projectId must be an integer")
         tags = _sanitize_tags(chat_req.tags)
 
-        metadata_filter = _validate_metadata_filter(chat_req.metadata_filter)
+        metadata_filter = _validate_metadata_filter(chat_req.metadataFilter)
 
         model = chat_req.model or settings.DEFAULT_MODEL
         if model not in ALLOWED_MODELS:
@@ -443,7 +559,7 @@ async def chat_stream(
                     raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="Monthly budget exhausted")
                 remaining_budget_usd -= hold_amt
 
-        prompt_tokens_est = _estimate_tokens_from_text(question)
+        prompt_tokens_est = _estimate_tokens_from_text(system_prompt) + _estimate_tokens_from_gemini_contents(contents)
         if remaining_budget_usd is not None:
             prompt_cost = calc_query_cost(model, prompt_tokens_est, 0).total_cost_usd
             if prompt_cost > remaining_budget_usd:
@@ -460,7 +576,7 @@ async def chat_stream(
                 if user_text:
                     break
         if not user_text:
-            user_text = question
+            user_text = user_question
         _ensure_chat_session(
             db,
             user_id=user_id,
@@ -486,7 +602,7 @@ async def chat_stream(
     finally:
         db.close()
 
-    async def generator():
+    async def generator() -> AsyncGenerator[str, None]:
         import logging
         import queue
         import threading
@@ -509,12 +625,14 @@ async def chat_stream(
         retry_count = 0
         sem_acquired = False
 
-        def _send_error(code: str, message: str, status_code: int | None = None) -> str:
+        def _send_error(
+            code: str, message: str, status_code: int | None = None, retry_after_ms: int | None = None
+        ) -> str:
             nonlocal error_sent, last_error_code, last_error_message
             error_sent = True
             last_error_code = code
             last_error_message = message
-            return _sse_error(code, message, status=status_code)
+            return _sse_error(code, message, status=status_code, retry_after_ms=retry_after_ms)
 
         try:
             try:
@@ -525,6 +643,7 @@ async def chat_stream(
                     "stream_capacity_exceeded",
                     "Server is busy. Please try again.",
                     status.HTTP_503_SERVICE_UNAVAILABLE,
+                    retry_after_ms=500,
                 )
                 yield "data: [DONE]\n\n"
                 return
@@ -541,25 +660,40 @@ async def chat_stream(
                     break
 
                 try:
-                    chunk_queue = queue.Queue(maxsize=20)
+                    chunk_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue(maxsize=20)
                     stop_event = threading.Event()
+                    producer_error: Exception | None = None
 
-                    def run_stream_in_thread():
+                    def _put_nowait(msg: tuple[str, Any]) -> None:
+                        try:
+                            chunk_queue.put_nowait(msg)
+                        except queue.Full:
+                            pass
+
+                    def run_stream_in_thread() -> None:
                         """Run synchronous ask_stream in background thread, pushing chunks to queue."""
+                        nonlocal producer_error
                         try:
                             for chunk in rag.ask_stream(
-                                question=question, store_names=fs_names, metadata_filter=metadata_filter, model=model
+                                contents=contents,
+                                system=system_prompt or None,
+                                store_names=fs_names,
+                                metadata_filter=metadata_filter,
+                                model=model,
                             ):
                                 if stop_event.is_set():
                                     break
                                 try:
-                                    chunk_queue.put(("chunk", chunk), timeout=1.0)
+                                    chunk_queue.put(("chunk", chunk), timeout=0.1)
                                 except queue.Full:
-                                    chunk_queue.put(("error", RuntimeError("Stream backpressure: chunk queue full")))
-                                    break
-                            chunk_queue.put(("done", None))
+                                    producer_error = StreamBackpressureError("Stream backpressure: chunk queue full")
+                                    stop_event.set()
+                                    _put_nowait(("error", producer_error))
+                                    return
+                            _put_nowait(("done", None))
                         except Exception as e:
-                            chunk_queue.put(("error", e))
+                            producer_error = e
+                            _put_nowait(("error", e))
 
                     stream_thread = threading.Thread(target=run_stream_in_thread, daemon=True)
                     stream_thread.start()
@@ -574,6 +708,10 @@ async def chat_stream(
                             try:
                                 msg_type, data = chunk_queue.get(timeout=0.1)
                             except queue.Empty:
+                                if not stream_thread.is_alive():
+                                    if producer_error is not None:
+                                        raise producer_error
+                                    break
                                 if await req.is_disconnected():
                                     logging.info("Client disconnected mid-stream")
                                     stream_failed = True
@@ -614,7 +752,9 @@ async def chat_stream(
                                                 )
                                             last_send = time.monotonic()
                                             break
-                                    yield f"data: {json.dumps({'type': 'text-delta', 'id': text_id, 'delta': text_delta})}\n\n"
+                                    yield (
+                                        f"data: {json.dumps({'type': 'text-delta', 'id': text_id, 'delta': text_delta})}\n\n"
+                                    )
                                     last_send = time.monotonic()
                                     assistant_text_parts.append(text_delta)
                                 if getattr(data, "candidates", None):
@@ -629,9 +769,22 @@ async def chat_stream(
 
                     break
 
+                except StreamBackpressureError as exc:
+                    log_json(30, "chat_stream_backpressure", user_id=user_id, model=model, error=str(exc))
+                    stream_failed = True
+                    if not error_sent:
+                        yield _send_error(
+                            "stream_backpressure",
+                            "Client too slow to receive stream. Please retry.",
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            retry_after_ms=250,
+                        )
+                    last_send = time.monotonic()
+                    break
+
                 except RETRYABLE_EXCEPTIONS as e:
                     retry_count += 1
-                    retry_delay = 2**retry_count
+                    retry_delay = min(8.0, 2**retry_count)
                     if retry_count > max_retries:
                         log_json(
                             40,
@@ -647,6 +800,7 @@ async def chat_stream(
                                 "upstream_unavailable",
                                 "Service temporarily unavailable. Please try again.",
                                 status.HTTP_503_SERVICE_UNAVAILABLE,
+                                retry_after_ms=1000,
                             )
                         last_send = time.monotonic()
                         break
@@ -676,28 +830,30 @@ async def chat_stream(
                     last_send = time.monotonic()
                     break
 
-            if stream_failed and last_error_code not in (None, "budget_exceeded"):
-                failure_tags = dict(tags or {}) if tags else {}
-                failure_tags["error_code"] = last_error_code
-                log_db = session_factory()
-                try:
-                    ql = QueryLog(
-                        user_id=user_id,
-                        store_id=store_ids_for_cost[0] if store_ids_for_cost else None,
-                        prompt_tokens=prompt_tokens_used,
-                        completion_tokens=completion_tokens_used,
-                        cost_usd=Decimal("0"),
-                        model=model,
-                        project_id=project_id,
-                        tags=failure_tags or None,
-                    )
-                    log_db.add(ql)
-                    log_db.commit()
-                except Exception as e:
-                    logging.error("Failed to log failed stream cost: %s", e, exc_info=e)
-                    log_db.rollback()
-                finally:
-                    log_db.close()
+            if stream_failed:
+                error_code = last_error_code
+                if error_code is not None and error_code != "budget_exceeded":
+                    failure_tags = dict(tags or {})
+                    failure_tags["error_code"] = error_code
+                    log_db = session_factory()
+                    try:
+                        ql = QueryLog(
+                            user_id=user_id,
+                            store_id=store_ids_for_cost[0] if store_ids_for_cost else None,
+                            prompt_tokens=prompt_tokens_used,
+                            completion_tokens=completion_tokens_used,
+                            cost_usd=Decimal("0"),
+                            model=model,
+                            project_id=project_id,
+                            tags=failure_tags or None,
+                        )
+                        log_db.add(ql)
+                        log_db.commit()
+                    except Exception as e:
+                        logging.error("Failed to log failed stream cost: %s", e, exc_info=e)
+                        log_db.rollback()
+                    finally:
+                        log_db.close()
 
             if stream_failed:
                 yield "data: [DONE]\n\n"
@@ -730,8 +886,18 @@ async def chat_stream(
                     getattr(final_resp, "candidates", [None])[0], "usage_metadata", None
                 )
             if usage:
-                prompt_toks = getattr(usage, "prompt_token_count", None) or prompt_toks
-                completion_toks = getattr(usage, "candidates_token_count", None) or completion_toks
+                prompt_count = getattr(usage, "prompt_token_count", None)
+                if prompt_count is not None:
+                    try:
+                        prompt_toks = int(prompt_count)
+                    except (TypeError, ValueError):
+                        pass
+                completion_count = getattr(usage, "candidates_token_count", None)
+                if completion_count is not None:
+                    try:
+                        completion_toks = int(completion_count)
+                    except (TypeError, ValueError):
+                        pass
             else:
                 if not completion_toks:
                     completion_toks = _estimate_tokens_from_text("".join(assistant_text_parts))
@@ -852,7 +1018,7 @@ def list_chat_sessions(
     limit: int = 50,
     db: Session = Depends(get_db),
     authorization: str = Depends(get_authorization),
-):
+) -> list[dict[str, object]]:
     user = get_current_user(db=db, token=authorization)
     query = db.query(ChatSession).filter(ChatSession.user_id == user.id)
     if storeId is not None:
@@ -867,7 +1033,7 @@ def list_chat_messages(
     session_id: str,
     db: Session = Depends(get_db),
     authorization: str = Depends(get_authorization),
-):
+) -> list[dict[str, object]]:
     user = get_current_user(db=db, token=authorization)
     session_row = db.get(ChatSession, session_id)
     if not session_row or session_row.user_id != user.id:
