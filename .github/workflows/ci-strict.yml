@@ -51,7 +51,7 @@ jobs:
           docker build -t rag-backend:ci backend
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: rag-backend:ci
           severity: CRITICAL,HIGH
