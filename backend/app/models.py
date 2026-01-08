@@ -3,9 +3,11 @@
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, JSON, Numeric, String, Text, event
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.sql import func
+from decimal import Decimal
 import enum
 import datetime
 import uuid
+from typing import Any
 from .db import Base
 
 
@@ -113,7 +115,7 @@ class Document(SoftDeleteMixin, Base):
 
 
 @event.listens_for(Document, "before_insert", propagate=True)
-def _init_status_timestamp(mapper, connection, target: Document) -> None:
+def _init_status_timestamp(mapper: Any, connection: Any, target: Document) -> None:
     """
     Ensure status_updated_at tracks the initial status timestamp, falling back to created_at.
 
@@ -143,7 +145,7 @@ class QueryLog(Base):
 class Budget(Base):
     __tablename__ = "budgets"
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
-    monthly_limit_usd: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    monthly_limit_usd: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="budget")

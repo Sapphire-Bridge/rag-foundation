@@ -25,7 +25,7 @@ class FakeRedis:
     - Use frozen_time fixture to control expiry behavior
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._data: dict[str, str] = {}
         self._expiry: dict[str, float] = {}
         self._counters: dict[str, int] = defaultdict(int)
@@ -223,7 +223,13 @@ class FakeRAGClient:
         return self.operations.get(op_name, {"done": False, "error": None})
 
     def ask_stream(
-        self, question: str, store_names: list, metadata_filter: dict | None = None, model: str = "gemini-2.5-flash"
+        self,
+        *,
+        contents,
+        system: str | None = None,
+        store_names: list,
+        metadata_filter: dict | None = None,
+        model: str = "gemini-2.5-flash",
     ):
         if self.stream_should_fail:
             raise RuntimeError(self.stream_error)
@@ -258,7 +264,7 @@ class FakeRAGClient:
 class FakeGCSClient:
     """Fake GCS client."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.uploaded_blobs: list[dict] = []
         self._buckets: dict[str, "FakeGCSBucket"] = {}
         self.should_fail: bool = False

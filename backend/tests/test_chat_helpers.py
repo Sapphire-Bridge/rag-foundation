@@ -18,6 +18,11 @@ def test_extract_message_text_prefers_nested_content():
     assert _extract_message_text(msg) == "hello ignored"
 
 
+def test_extract_message_text_supports_ui_message_parts():
+    msg = {"role": "user", "parts": [{"type": "text", "text": "hello"}, {"type": "text", "text": "world"}]}
+    assert _extract_message_text(msg) == "hello world"
+
+
 def test_build_history_prompt_tracks_last_user_and_transcript():
     transcript, last_user = _build_history_prompt(
         [
@@ -26,13 +31,14 @@ def test_build_history_prompt_tracks_last_user_and_transcript():
             {"role": "user", "text": "again"},
         ]
     )
+    assert transcript is not None
     assert "User: hi" in transcript and "Assistant: there" in transcript
     assert last_user == "again"
 
 
 def test_sanitize_tags_filters_invalid_entries():
     with pytest.raises(HTTPException):
-        _sanitize_tags(["bad"])  # type: ignore[arg-type]
+        _sanitize_tags(["bad"])
 
     tags = _sanitize_tags({"": "skip", "ok": "value", "num": 3, "nested": {"bad": True}})
     assert tags == {"ok": "value", "num": "3"}
@@ -40,7 +46,9 @@ def test_sanitize_tags_filters_invalid_entries():
 
 def test_trim_and_session_id_helpers():
     long_title = "x" * 80
-    assert _trim_title(long_title).endswith("…")
+    trimmed = _trim_title(long_title)
+    assert trimmed is not None
+    assert trimmed.endswith("…")
 
     sid = _sanitize_session_id(" " + "y" * 70)
     assert len(sid) <= 64

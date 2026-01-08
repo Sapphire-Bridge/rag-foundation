@@ -59,7 +59,7 @@ class _RecordingRag:
     def new_stream_ids(self):
         return ("msg-meta", "text-meta")
 
-    def ask_stream(self, *, question, store_names, metadata_filter, model):
+    def ask_stream(self, *, contents=None, system=None, store_names=None, metadata_filter=None, model=None):
         self.seen_filter = metadata_filter
 
         def _gen():

@@ -3,11 +3,14 @@
 import re
 import time
 import uuid
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, Awaitable, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
+from starlette.responses import Response
 from .config import settings
 from .telemetry import (
     bind_request_context,
@@ -37,14 +40,8 @@ logger = setup_logging()
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="RAG Assistant Backend", version="0.2.1")
-
-    # Initialize DB objects on app state for dependency injection / test overrides.
-    app.state.engine = engine
-    app.state.SessionLocal = SessionLocal
-
-    @app.on_event("startup")
-    async def validate_config_on_startup():
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         """Validate critical config on startup - fail fast if misconfigured."""
         logger.info("Validating configuration at startup...")
         try:
@@ -60,13 +57,23 @@ def create_app() -> FastAPI:
             # Run security gate checks
             run_security_gate()
 
+            if settings.ENVIRONMENT in {"staging", "production"} and not settings.CORS_ORIGINS:
+                raise ValueError("CORS_ORIGINS must be set in staging/production")
+
         except (ValueError, AssertionError) as e:
             logger.error(f"Configuration validation failed: {e}")
             raise RuntimeError(f"Invalid configuration: {e}") from e
+        yield
+
+    app = FastAPI(title="RAG Assistant Backend", version="0.2.1", lifespan=_lifespan)
+
+    # Initialize DB objects on app state for dependency injection / test overrides.
+    app.state.engine = engine
+    app.state.SessionLocal = SessionLocal
 
     # CSRF protection via custom header requirement
     @app.middleware("http")
-    async def _csrf_protection(request: Request, call_next):
+    async def _csrf_protection(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         """Require X-Requested-With header for state-changing operations."""
         if settings.REQUIRE_CSRF_HEADER and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             # Skip CSRF check for health/metrics endpoints
@@ -87,7 +94,9 @@ def create_app() -> FastAPI:
     )
 
     @app.middleware("http")
-    async def _http_metrics_middleware(request, call_next):
+    async def _http_metrics_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         """Record HTTP request metrics: count and duration per method+endpoint+status."""
         from .metrics import http_requests_total, http_request_duration
         import time
@@ -133,7 +142,7 @@ def create_app() -> FastAPI:
         ]
 
     @app.middleware("http")
-    async def _security_headers(request: Request, call_next):
+    async def _security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         """Add comprehensive security headers to all responses."""
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -158,15 +167,17 @@ def create_app() -> FastAPI:
         return response
 
     @app.middleware("http")
-    async def _json_body_limit(request, call_next):
+    async def _json_body_limit(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         from fastapi.responses import JSONResponse
 
         max_bytes = settings.MAX_JSON_MB * 1024 * 1024
+        path = request.url.path
+        is_upload_path = path == "/api/upload" or path.startswith("/api/upload/")
 
         # Global guard: reject obviously oversized requests by Content-Length, except uploads which
         # have their own streaming limit and larger cap.
         cl = request.headers.get("content-length")
-        if cl and cl.isdigit() and int(cl) > max_bytes and request.url.path != "/api/upload":
+        if cl and cl.isdigit() and int(cl) > max_bytes and not is_upload_path:
             return JSONResponse(status_code=413, content={"detail": "Request body too large"})
 
         ct = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
@@ -176,7 +187,7 @@ def create_app() -> FastAPI:
             # consuming the stream up to max_bytes to avoid unbounded memory usage. Skip uploads,
             # which enforce their own streaming limits.
             te = (request.headers.get("transfer-encoding") or "").lower()
-            if request.url.path != "/api/upload" and (not cl or "chunked" in te):
+            if not is_upload_path and (not cl or "chunked" in te):
                 received = 0
                 chunks: list[bytes] = []
                 try:
@@ -191,13 +202,13 @@ def create_app() -> FastAPI:
                     return JSONResponse(status_code=400, content={"detail": "Invalid request body"})
 
                 body = b"".join(chunks)
-                request._body = body  # type: ignore[attr-defined]
+                setattr(request, "_body", body)
                 if hasattr(request, "_stream_consumed"):
-                    request._stream_consumed = True  # type: ignore[attr-defined]
+                    setattr(request, "_stream_consumed", True)
             return await call_next(request)
 
         received = 0
-        chunks: list[bytes] = []
+        chunks = []
         try:
             async for chunk in request.stream():
                 if not chunk:
@@ -211,12 +222,12 @@ def create_app() -> FastAPI:
 
         body = b"".join(chunks)
 
-        request._body = body  # type: ignore[attr-defined]
+        setattr(request, "_body", body)
         if hasattr(request, "_stream_consumed"):
-            request._stream_consumed = True  # type: ignore[attr-defined]
+            setattr(request, "_stream_consumed", True)
         return await call_next(request)
 
-    async def _correlation_id(request: Request, call_next):
+    async def _correlation_id(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         """Assign or propagate a request ID and ensure it reaches logs and responses."""
         cid = request.headers.get("X-Request-ID")
         if not cid or not re.fullmatch("[A-Za-z0-9-]{8,64}", cid):
@@ -265,7 +276,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(_correlation_id)
 
     @app.exception_handler(Exception)
-    async def _global_exc_handler(request, exc):
+    async def _global_exc_handler(request: Request, exc: Exception) -> Response:
         from fastapi.responses import JSONResponse
 
         # Log exception for debugging while returning generic error to client
@@ -301,7 +312,7 @@ def create_app() -> FastAPI:
             403: {"description": "Forbidden"},
         },
     )
-    async def metrics(request: Request):
+    async def metrics(request: Request) -> Response:
         client_ip = request.client.host if request.client else "unknown"
         if not settings.METRICS_ALLOW_ALL:
             # Restrict metrics endpoint to localhost by default; adjust for your infra as needed.
@@ -317,11 +328,21 @@ def create_app() -> FastAPI:
             503: {"model": HealthStatus},
         },
     )
-    def health():
+    def health() -> JSONResponse:
         import logging
-        from fastapi.responses import JSONResponse
         from .genai import errors
         import importlib
+
+        api_error = getattr(errors, "APIError", None)
+
+        class _FallbackAPIError(Exception):
+            pass
+
+        APIError: type[BaseException]
+        if isinstance(api_error, type) and issubclass(api_error, BaseException):
+            APIError = api_error
+        else:
+            APIError = _FallbackAPIError
 
         db_ok = ping_db()
         redis_ok = True
@@ -369,7 +390,7 @@ def create_app() -> FastAPI:
                         gemini_ok = False
                 _gemini_health_cache["ts"] = now_ts
                 _gemini_health_cache["ok"] = gemini_ok
-        except (ImportError, TypeError, ValueError, errors.APIError) as e:
+        except (ImportError, TypeError, ValueError, APIError) as e:
             logging.warning(f"Gemini health check failed: {e}")
             gemini_ok = False
         status = {"database": db_ok, "gemini_api": gemini_ok, "redis": redis_ok}

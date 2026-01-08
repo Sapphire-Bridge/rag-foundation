@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from app.config import Settings
@@ -10,7 +12,7 @@ from app.file_types import (
 )
 
 
-def _base_kwargs() -> dict[str, str]:
+def _base_kwargs() -> dict[str, Any]:
     return {
         "GEMINI_API_KEY": "test-key-12345678901234567890",
         "JWT_SECRET": "x" * 64,

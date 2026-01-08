@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from types import SimpleNamespace
+from fastapi import Depends
+from sqlalchemy.orm import Session
 
 from app.models import ChatHistory, Store, User
 from app.routes import chat as chat_routes
@@ -76,7 +77,22 @@ def test_chat_rejects_oversize_question(client, db_session):
     # Bypass auth/CSRF in tests while keeping route logic intact
     client.app.dependency_overrides[real_get_authorization] = lambda: "test-token"
     orig_get_current_user = chat_routes.get_current_user
-    chat_routes.get_current_user = lambda db, token: SimpleNamespace(id=store.user_id)
+    user = User(
+        id=store.user_id,
+        email=f"user-{store.user_id}@example.com",
+        hashed_password="",
+        is_active=True,
+        email_verified=True,
+        is_admin=False,
+    )
+
+    def _ov_get_current_user(
+        db: Session = Depends(chat_routes.get_db),
+        token: str = Depends(chat_routes.get_authorization),
+    ) -> User:
+        return user
+
+    chat_routes.get_current_user = _ov_get_current_user
     try:
         resp = client.post(
             "/api/chat",

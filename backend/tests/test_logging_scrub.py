@@ -2,14 +2,16 @@ import json
 import logging
 from unittest.mock import MagicMock, Mock, patch
 
-from fastapi import Request
+from fastapi import Depends, Request
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from app.auth import get_authorization as real_get_authorization
 from app.auth import get_current_user as real_get_current_user
 from app.db import get_db as real_get_db, get_session_factory as real_get_session_factory
 import app.routes.chat as chat_routes
 from app.main import app
+from app.models import User
 
 
 def _record_payload(record):
@@ -53,12 +55,26 @@ def test_request_headers_are_scrubbed(caplog):
 
 def test_llm_errors_are_redacted(caplog):
     client = TestClient(app)
-    mock_user = Mock(id=1)
-    app.dependency_overrides[real_get_current_user] = lambda: mock_user
+    user = User(
+        id=1,
+        email="user-1@example.com",
+        hashed_password="",
+        is_active=True,
+        email_verified=True,
+        is_admin=False,
+    )
+    app.dependency_overrides[real_get_current_user] = lambda: user
     app.dependency_overrides[real_get_authorization] = lambda: "test-token"
     app.dependency_overrides[chat_routes.get_authorization] = lambda: "test-token"
     orig_get_current_user = chat_routes.get_current_user
-    chat_routes.get_current_user = lambda db, token: mock_user
+
+    def _ov_get_current_user(
+        db: Session = Depends(real_get_db),
+        token: str = Depends(real_get_authorization),
+    ) -> User:
+        return user
+
+    chat_routes.get_current_user = _ov_get_current_user
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.one_or_none.return_value = None
 
@@ -72,7 +88,7 @@ def test_llm_errors_are_redacted(caplog):
     app.dependency_overrides[real_get_session_factory] = _ov_session_factory
 
     secret_prompt = "never log this prompt text"
-    mock_store = Mock(id=1, fs_name="test-store", user_id=mock_user.id)
+    mock_store = Mock(id=1, fs_name="test-store", user_id=user.id)
     mock_db.query.return_value.filter.return_value.all.return_value = [mock_store]
 
     class NoisyLLMError(Exception):

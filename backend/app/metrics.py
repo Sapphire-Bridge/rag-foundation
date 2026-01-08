@@ -8,5 +8,5 @@ gemini_latency = Histogram("gemini_api_latency_seconds", "Gemini API latency", [
 token_usage_total = Counter("llm_tokens_total", "LLM token usage", ["model", "type"])
 
 
-async def metrics_endpoint():
+async def metrics_endpoint() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

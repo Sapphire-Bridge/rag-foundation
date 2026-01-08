@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import importlib
 import os
-from typing import Optional
+from typing import Any, Optional
 
 from app.config import settings
 
 
-def _require_storage_client():
+def _require_storage_client() -> Any:
     try:
-        from google.cloud import storage  # type: ignore
+        storage: Any = importlib.import_module("google.cloud.storage")
     except ImportError as exc:  # pragma: no cover - import guard
         raise RuntimeError(
             "google-cloud-storage is required for GCS archiving. Install it or disable GCS_ARCHIVE_BUCKET."

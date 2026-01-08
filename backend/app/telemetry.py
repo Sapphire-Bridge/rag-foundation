@@ -4,8 +4,8 @@ import json
 import logging
 import sys
 import traceback
-from contextvars import ContextVar
-from typing import Dict, Optional
+from contextvars import ContextVar, Token
+from typing import Any, Dict, Optional
 
 # Per-request context injected by middleware/dependencies
 _request_id_ctx: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
@@ -76,7 +76,7 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
-def setup_logging():
+def setup_logging() -> logging.Logger:
     """Configure root logger to emit JSON structured logs."""
     root = logging.getLogger()
     handler = logging.StreamHandler(sys.stdout)
@@ -91,12 +91,12 @@ def setup_logging():
     return root
 
 
-def bind_request_context(request_id: Optional[str]) -> object:
+def bind_request_context(request_id: Optional[str]) -> Token[Optional[str]]:
     """Bind the current request_id into a contextvar (returns reset token)."""
     return _request_id_ctx.set(request_id)
 
 
-def clear_request_context(token: object | None = None) -> None:
+def clear_request_context(token: Token[Optional[str]] | None = None) -> None:
     try:
         if token is not None:
             _request_id_ctx.reset(token)
@@ -106,12 +106,12 @@ def clear_request_context(token: object | None = None) -> None:
         _request_id_ctx.set(None)
 
 
-def bind_user_context(user_id: Optional[int]) -> object:
+def bind_user_context(user_id: Optional[int]) -> Token[Optional[int]]:
     """Bind the current user_id into a contextvar (returns reset token)."""
     return _user_id_ctx.set(user_id)
 
 
-def clear_user_context(token: object | None = None) -> None:
+def clear_user_context(token: Token[Optional[int]] | None = None) -> None:
     try:
         if token is not None:
             _user_id_ctx.reset(token)
@@ -152,21 +152,22 @@ def scrub_sensitive_headers(headers: Dict[str, str]) -> Dict[str, str]:
     return {k: ("[REDACTED]" if _is_secretish(k) else v) for k, v in headers.items()}
 
 
-def _scrub_header_fields(payload: Dict[str, object]) -> Dict[str, object]:
+def _scrub_header_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Scrub any header-like fields on a logging payload to avoid leaking secrets.
     """
     header_keys = {"headers", "request_headers", "response_headers"}
-    cleaned: Dict[str, object] = {}
+    cleaned: Dict[str, Any] = {}
     for key, value in payload.items():
         if isinstance(key, str) and key.lower() in header_keys and isinstance(value, dict):
-            cleaned[key] = scrub_sensitive_headers(value)
+            header_dict = {str(k): str(v) for k, v in value.items()}
+            cleaned[key] = scrub_sensitive_headers(header_dict)
         else:
             cleaned[key] = value
     return cleaned
 
 
-def log_json(level: int, msg: str, **fields):
+def log_json(level: int, msg: str, **fields: Any) -> None:
     payload = {"event": msg, **fields}
     payload = _scrub_header_fields(payload)
     rid = _request_id_ctx.get()

@@ -53,14 +53,14 @@ def _is_retryable_error(exc: BaseException) -> bool:
     return False
 
 
-def _wait_strategy(retry_state):
+def _wait_strategy(retry_state: Any) -> float:
     exc = retry_state.outcome.exception()
     if _is_rate_limit_error(exc):
         return wait_exponential(multiplier=2, min=4, max=30)(retry_state)
     return wait_exponential(multiplier=0.5, min=1, max=10)(retry_state)
 
 
-def _before_sleep_log(retry_state):
+def _before_sleep_log(retry_state: Any) -> None:
     exc = retry_state.outcome.exception()
     logger.warning(
         "Retrying Gemini call",
@@ -72,7 +72,7 @@ def _before_sleep_log(retry_state):
     )
 
 
-def _gemini_retry():
+def _gemini_retry() -> Any:
     """Provide a consistent retry decorator for Gemini operations."""
     return retry(
         stop=stop_after_attempt(settings.GEMINI_RETRY_ATTEMPTS),
@@ -83,7 +83,7 @@ def _gemini_retry():
     )
 
 
-def _get_response_name(response, *, context: str) -> str:
+def _get_response_name(response: Any, *, context: str) -> str:
     if isinstance(response, str):
         return response
     name = response.get("name") if isinstance(response, dict) else getattr(response, "name", None)
@@ -247,7 +247,7 @@ class GeminiRag:
     Thread-safety: Safe for concurrent use (underlying client is thread-safe)
     """
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None) -> None:
         # Intentionally omit explicit HTTP timeouts; streaming can surpass 60s and should not be cut off.
         self.client = genai.Client(api_key=api_key)
         # Retain API key for REST fallback on rare SDK timeout issues
@@ -404,7 +404,7 @@ class GeminiRag:
             )
             raise
 
-    def op_status(self, op_name: str | dict) -> dict:
+    def op_status(self, op_name: str | dict) -> dict[str, Any]:
         op_name_str = _get_response_name(op_name, context="operation status request")
 
         # Prefer REST when we have an API key; SDK expects an operation object, not a raw string.
@@ -441,14 +441,44 @@ class GeminiRag:
             )
         )
 
+    @staticmethod
+    def _prepend_system(contents: Any, system: str) -> Any:
+        system_msg = {"role": "user", "parts": [{"text": system}]}
+        if isinstance(contents, list):
+            return [system_msg, *contents]
+        if isinstance(contents, str):
+            user_msg = {"role": "user", "parts": [{"text": contents}]}
+            return [system_msg, user_msg]
+        return [system_msg, {"role": "user", "parts": [{"text": str(contents)}]}]
+
     @_gemini_retry()
-    def ask(self, *, question: str, store_names: Sequence[str], metadata_filter: Optional[Any], model: str):
+    def ask(
+        self,
+        *,
+        contents: Any,
+        store_names: Sequence[str],
+        metadata_filter: Optional[Any],
+        model: str,
+        system: str | None = None,
+    ) -> Any:
         start = time.perf_counter()
         try:
             tool = self._file_search_tool(store_names, metadata_filter)
-            resp = self.client.models.generate_content(
-                model=model, contents=question, config=types.GenerateContentConfig(tools=[tool])
-            )
+            try:
+                config = (
+                    types.GenerateContentConfig(tools=[tool], system_instruction=system)
+                    if system
+                    else types.GenerateContentConfig(tools=[tool])
+                )
+                resp = self.client.models.generate_content(model=model, contents=contents, config=config)
+            except TypeError:
+                # Older clients may not accept system_instruction; fall back to embedding as the first content turn.
+                config = types.GenerateContentConfig(tools=[tool])
+                resp = self.client.models.generate_content(
+                    model=model,
+                    contents=self._prepend_system(contents, system) if system else contents,
+                    config=config,
+                )
             gemini_calls_total.labels("generate", "ok").inc()
             return resp
         except errors.APIError:
@@ -458,15 +488,32 @@ class GeminiRag:
             gemini_latency.labels("generate").observe(time.perf_counter() - start)
 
     def ask_stream(
-        self, *, question: str, store_names: Sequence[str], metadata_filter: Optional[Any], model: str
+        self,
+        *,
+        contents: Any,
+        store_names: Sequence[str],
+        metadata_filter: Optional[Any],
+        model: str,
+        system: str | None = None,
     ) -> Generator:
         # Streaming initial connection may fail; wrap connect phase with retry
         tool = self._file_search_tool(store_names, metadata_filter)
         start = time.perf_counter()
         try:
-            stream_iter = self.client.models.generate_content_stream(
-                model=model, contents=question, config=types.GenerateContentConfig(tools=[tool])
-            )
+            try:
+                config = (
+                    types.GenerateContentConfig(tools=[tool], system_instruction=system)
+                    if system
+                    else types.GenerateContentConfig(tools=[tool])
+                )
+                stream_iter = self.client.models.generate_content_stream(model=model, contents=contents, config=config)
+            except TypeError:
+                config = types.GenerateContentConfig(tools=[tool])
+                stream_iter = self.client.models.generate_content_stream(
+                    model=model,
+                    contents=self._prepend_system(contents, system) if system else contents,
+                    config=config,
+                )
             gemini_calls_total.labels("generate_stream", "ok").inc()
             for chunk in stream_iter:
                 yield chunk
@@ -478,8 +525,8 @@ class GeminiRag:
 
     # -------- Citations --------
     @staticmethod
-    def extract_citations_from_response(response) -> List[dict]:
-        out: List[dict] = []
+    def extract_citations_from_response(response: Any) -> List[dict[str, Any]]:
+        out: List[dict[str, Any]] = []
         try:
             cand = response.candidates[0]
             gm = getattr(cand, "grounding_metadata", None)
@@ -521,12 +568,12 @@ class GeminiRag:
             return out
 
     @staticmethod
-    def new_stream_ids():
+    def new_stream_ids() -> tuple[str, str]:
         return str(uuid.uuid4()), str(uuid.uuid4())
 
 
 class MockGeminiRag(GeminiRag):
-    def __init__(self):
+    def __init__(self) -> None:
         self.is_mock = True
         self._store_counter = 0
 
@@ -554,32 +601,64 @@ class MockGeminiRag(GeminiRag):
         finally:
             gemini_latency.labels("upload").observe(time.perf_counter() - start)
 
-    def op_status(self, op_name: str) -> dict:
+    def op_status(self, op_name: str | dict) -> dict[str, Any]:
+        op_name_str = _get_response_name(op_name, context="mock operation status request")
         return {
-            "name": op_name,
+            "name": op_name_str,
             "done": True,
             "metadata": {},
             "error": None,
         }
 
-    def ask(self, *, question: str, store_names: Sequence[str], metadata_filter: Optional[str], model: str):
+    @staticmethod
+    def _contents_to_text(contents: Any) -> str:
+        if isinstance(contents, str):
+            return contents
+        if isinstance(contents, list):
+            for item in reversed(contents):
+                if isinstance(item, str) and item.strip():
+                    return item.strip()
+                if isinstance(item, dict):
+                    parts = item.get("parts")
+                    if isinstance(parts, list) and parts and isinstance(parts[0], dict):
+                        text = parts[0].get("text")
+                        if isinstance(text, str) and text.strip():
+                            return text.strip()
+        return str(contents)
+
+    def ask(
+        self,
+        *,
+        contents: Any,
+        store_names: Sequence[str],
+        metadata_filter: Optional[str],
+        model: str,
+        system: str | None = None,
+    ) -> Any:
         start = time.perf_counter()
         try:
-            resp = self._mock_response(question, store_names)
+            resp = self._mock_response(self._contents_to_text(contents), store_names)
             gemini_calls_total.labels("generate", "ok").inc()
             return resp
         finally:
             gemini_latency.labels("generate").observe(time.perf_counter() - start)
 
     def ask_stream(
-        self, *, question: str, store_names: Sequence[str], metadata_filter: Optional[str], model: str
+        self,
+        *,
+        contents: Any,
+        store_names: Sequence[str],
+        metadata_filter: Optional[str],
+        model: str,
+        system: str | None = None,
     ) -> Generator:
         start = time.perf_counter()
         try:
-            resp = self._mock_response(question, store_names)
+            text = self._contents_to_text(contents)
+            resp = self._mock_response(text, store_names)
             gemini_calls_total.labels("generate_stream", "ok").inc()
             yield SimpleNamespace(
-                text=f"[mock-mode] {question or 'response'}",
+                text=f"[mock-mode] {text or 'response'}",
                 candidates=None,
                 usage_metadata=SimpleNamespace(prompt_token_count=0, candidates_token_count=0),
             )
@@ -595,7 +674,7 @@ class MockGeminiRag(GeminiRag):
     ) -> None:
         logging.info(f"[mock] delete_document called for document {document_id} in {store_name} (file_id={file_id})")
 
-    def _mock_response(self, question: str, store_names: Sequence[str]):
+    def _mock_response(self, question: str, store_names: Sequence[str]) -> Any:
         snippet = question[:128] if question else "Mock response"
         usage = SimpleNamespace(prompt_token_count=0, candidates_token_count=0)
         retrieved_context = SimpleNamespace(

@@ -10,9 +10,12 @@ venv/
 .env
 .env.*
 *.db
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 
 # Node
-frontend/node_modules/
+frontend/node_modules*/
 frontend/dist/
 frontend/.vite/
 genai-test/

@@ -1,7 +1,7 @@
 import time
 import uuid
 import re
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 from .telemetry import (
@@ -14,7 +14,7 @@ from .telemetry import (
 
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         # Get correlation ID from header, validate it, or generate new one
         cid = request.headers.get("X-Request-ID")
 

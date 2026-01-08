@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from ..config import settings
@@ -24,7 +26,7 @@ def build_router(current_settings: Settings | None = None) -> APIRouter:
     router = APIRouter(prefix="/auth", tags=["auth"])
 
     @router.post("/register")
-    def register(body: RegisterIn, db: Session = Depends(get_db)):
+    def register(body: RegisterIn, db: Session = Depends(get_db)) -> dict[str, Any]:
         email = body.email.lower().strip()
         pw = body.password
         try:
@@ -45,7 +47,7 @@ def build_router(current_settings: Settings | None = None) -> APIRouter:
         return {"ok": True}
 
     @router.post("/login", response_model=TokenOut)
-    def login(body: LoginIn, db: Session = Depends(get_db)):
+    def login(body: LoginIn, db: Session = Depends(get_db)) -> TokenOut:
         email = body.email.lower().strip()
         # Throttle login attempts per email to mitigate brute force.
         check_rate_limit(f"login:{email}", cfg.LOGIN_RATE_LIMIT_PER_MINUTE)
@@ -59,7 +61,7 @@ def build_router(current_settings: Settings | None = None) -> APIRouter:
     if cfg.ALLOW_DEV_LOGIN and cfg.ENVIRONMENT != "production":
 
         @router.post("/token", response_model=TokenOut, include_in_schema=(cfg.ENVIRONMENT != "production"))
-        def dev_login(body: DevLoginIn, db: Session = Depends(get_db)):
+        def dev_login(body: DevLoginIn, db: Session = Depends(get_db)) -> TokenOut:
             """
             Dev-only login endpoint. NOT AVAILABLE IN PRODUCTION.
             Creates or gets a user by email without password verification.
@@ -82,7 +84,7 @@ def build_router(current_settings: Settings | None = None) -> APIRouter:
             return TokenOut(access_token=token)
 
     @router.post("/logout")
-    def logout(token: str = Depends(get_authorization), user: User = Depends(get_current_user)):
+    def logout(token: str = Depends(get_authorization), user: User = Depends(get_current_user)) -> dict[str, Any]:
         """
         Logout endpoint. Revokes the current JWT token by adding its JTI to the revocation list.
         The token will be invalid until its natural expiration.

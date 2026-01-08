@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     JWT_AUDIENCE: str = "rag-users"
 
     # CORS / rate limiting
-    CORS_ORIGINS: List[AnyHttpUrl] = ["http://localhost:5173"]
+    CORS_ORIGINS: List[AnyHttpUrl] = Field(default_factory=list)
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: List[str] = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     CORS_ALLOW_HEADERS: List[str] = ["Authorization", "Content-Type", "X-Requested-With", "X-Request-ID"]
@@ -130,7 +130,7 @@ class Settings(BaseSettings):
     GEMINI_HTTP_TIMEOUT_S: int = 60
     GEMINI_RETRY_ATTEMPTS: int = 3
     GEMINI_STREAM_RETRY_ATTEMPTS: int = 2
-    STREAM_KEEPALIVE_SECS: int = 10
+    STREAM_KEEPALIVE_SECS: float = 10.0
     MAX_CONCURRENT_STREAMS: int = 50
     GEMINI_INGESTION_TIMEOUT_S: int = 180
 
@@ -159,12 +159,12 @@ class Settings(BaseSettings):
     @classmethod
     def settings_customise_sources(
         cls,
-        settings_cls,
-        init_settings,
-        env_settings,
-        dotenv_settings,
-        file_secret_settings,
-    ):
+        settings_cls: type[BaseSettings],
+        init_settings: Any,
+        env_settings: Any,
+        dotenv_settings: Any,
+        file_secret_settings: Any,
+    ) -> tuple[Any, ...]:
         # Read *_FILE secrets before environment variables for predictable overrides.
         return (
             init_settings,
@@ -197,7 +197,7 @@ class Settings(BaseSettings):
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def parse_cors_origins(cls, value: Any) -> List[AnyHttpUrl]:
+    def parse_cors_origins(cls, value: Any) -> Any:
         """Allow both JSON array and comma-separated string for CORS_ORIGINS."""
         if isinstance(value, str):
             import json
@@ -208,10 +208,10 @@ class Settings(BaseSettings):
             except json.JSONDecodeError:
                 # Fallback to single origin or comma-separated
                 parts = [v.strip() for v in value.split(",") if v.strip()]
-                return parts  # type: ignore[return-value]
+                return parts
             else:
                 if isinstance(parsed, list):
-                    return parsed  # type: ignore[return-value]
+                    return parsed
         return value
 
     @field_validator("TRUSTED_PROXY_IPS", mode="before")

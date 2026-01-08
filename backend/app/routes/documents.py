@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from ..auth import get_current_user, require_admin
 from ..db import get_db
-from ..models import Document
+from ..models import Document, User
 from ..schemas import DocumentOut
 from ..security.tenant import require_document_owned_by_user, require_store_owned_by_user
 from ..services.cleanup import enqueue_document_cleanup
@@ -20,8 +20,8 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 def list_documents_for_store(
     store_id: int,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
+    user: User = Depends(get_current_user),
+) -> list[DocumentOut]:
     require_store_owned_by_user(db, store_id, user.id)
     docs = (
         db.query(Document)
@@ -49,8 +49,8 @@ def delete_document(
     document_id: int,
     background: BackgroundTasks,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
+    user: User = Depends(get_current_user),
+) -> dict[str, str]:
     document = require_document_owned_by_user(db, document_id, user.id)
 
     document.soft_delete(user_id=user.id)
@@ -65,8 +65,8 @@ def delete_document(
 def restore_document(
     document_id: int,
     db: Session = Depends(get_db),
-    admin_user=Depends(require_admin),
-):
+    admin_user: User = Depends(require_admin),
+) -> dict[str, int]:
     check_rate_limit(f"admin:{getattr(admin_user, 'id', 'unknown')}:restore_document", settings.RATE_LIMIT_PER_MINUTE)
     document = db.get(Document, document_id)
     if not document:
@@ -80,7 +80,7 @@ def restore_document(
         admin_user_id=getattr(admin_user, "id", None),
         action="restore_document",
         target_type="document",
-        target_id=document.id,
+        target_id=str(document.id),
         metadata={"store_id": document.store_id},
     )
     log_json(

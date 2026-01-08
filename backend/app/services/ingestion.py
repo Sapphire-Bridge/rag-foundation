@@ -8,9 +8,10 @@ import os
 import random
 import re
 import time
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.costs import calc_index_cost, estimate_tokens_from_bytes
@@ -20,13 +21,15 @@ from app.models import Document, DocumentStatus, QueryLog, Store
 from app.services.gemini_rag import (
     RETRYABLE_EXCEPTIONS,
     UploadResult,
-    _extract_uploaded_file_id,  # type: ignore
+    _extract_uploaded_file_id,
     get_rag_client,
 )
 from app.genai import redact_llm_error
 from app.telemetry import log_json
 
 logger = logging.getLogger(__name__)
+
+SessionFactory = Callable[[], Session]
 
 
 @retry(
@@ -35,7 +38,7 @@ logger = logging.getLogger(__name__)
     retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
     reraise=True,
 )
-def _op_status(rag, op_name: str) -> dict:
+def _op_status(rag: Any, op_name: str) -> dict[str, Any]:
     return rag.op_status(op_name)
 
 
@@ -45,7 +48,7 @@ def _op_status(rag, op_name: str) -> dict:
     retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
     reraise=True,
 )
-def _upload_file_with_retry(rag, store, local_path: str, display_name: str | None) -> UploadResult:
+def _upload_file_with_retry(rag: Any, store: Store, local_path: str, display_name: str | None) -> UploadResult:
     return rag.upload_file(store.fs_name, local_path, display_name=display_name)
 
 
@@ -67,7 +70,7 @@ def _sanitize_error(exc: Exception | str) -> str:
     return msg[:500]
 
 
-def _log_index_cost(store: Store, document: Document, session_factory=None) -> None:
+def _log_index_cost(store: Store, document: Document, session_factory: SessionFactory | None = None) -> None:
     session_factory = session_factory or SessionLocal
     idx_tokens = estimate_tokens_from_bytes(document.size_bytes)
     idx_cost = calc_index_cost(idx_tokens)
@@ -100,7 +103,7 @@ def _log_index_cost(store: Store, document: Document, session_factory=None) -> N
         db.close()
 
 
-def _wait_for_operation_completion(rag, op_name: str) -> None:
+def _wait_for_operation_completion(rag: Any, op_name: str) -> None:
     """
     Poll the Gemini LRO until DONE or ERROR, with jitter and a hard timeout.
     """
@@ -136,7 +139,9 @@ def _wait_for_operation_completion(rag, op_name: str) -> None:
         wait = min(wait * 1.5, wait_max)
 
 
-def run_ingestion_sync(store_id: int, document_id: int, local_path: str, session_factory=None) -> None:
+def run_ingestion_sync(
+    store_id: int, document_id: int, local_path: str, session_factory: SessionFactory | None = None
+) -> None:
     """
     Durable ingestion job executed by the worker (synchronous core).
 
@@ -337,6 +342,8 @@ def run_ingestion_sync(store_id: int, document_id: int, local_path: str, session
         db.close()
 
 
-async def index_document_job(ctx, store_id: int, document_id: int, local_path: str, session_factory=None) -> None:
+async def index_document_job(
+    ctx: Any, store_id: int, document_id: int, local_path: str, session_factory: SessionFactory | None = None
+) -> None:
     """ARQ job wrapper: run sync ingestion logic in a worker thread."""
     await asyncio.to_thread(run_ingestion_sync, store_id, document_id, local_path, session_factory or SessionLocal)

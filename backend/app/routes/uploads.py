@@ -19,7 +19,7 @@ from ..costs import (
     would_exceed_budget,
 )
 from ..db import get_db
-from ..models import Document, DocumentStatus
+from ..models import Document, DocumentStatus, User
 from ..rate_limit import check_rate_limit
 from ..schemas import OpStatus, UploadResponse
 from ..security.tenant import require_document_owned_by_user, require_store_owned_by_user
@@ -109,12 +109,12 @@ def validate_file_magic(path: str, mime: str) -> bool:
 async def upload(
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user: User = Depends(get_current_user),
     _: None = Depends(require_pricing_configured),
     storeId: int = Form(..., description="ID of the target store"),
     file: UploadFile = File(..., description="Document file to ingest"),
     displayName: str | None = Form(None, max_length=255, description="Optional display name override"),
-):
+) -> UploadResponse:
     # Ensure we return 401 before validating the payload when auth is missing.
     authz = request.headers.get("authorization")
     if not authz or not authz.lower().startswith("bearer "):
@@ -306,7 +306,7 @@ async def upload(
 
 
 @router.get("/op-status/{op_id}", response_model=OpStatus)
-def op_status(op_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def op_status(op_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> OpStatus:
     # We use "doc-{id}" as op_id
     if not op_id.startswith("doc-"):
         log_json(30, "op_status_invalid_id", user_id=user.id, op_id=op_id)
