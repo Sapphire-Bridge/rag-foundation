@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from app.auth import get_current_user
 from app.config import settings
+from app.costs import IndexCostResult
 from app.models import Store, User, Budget
 import app.routes.uploads as uploads_routes
 
@@ -152,12 +153,9 @@ def test_upload_budget_hold_blocks_when_near_limit(client, db_session):
 
     original_calc = uploads_routes.calc_index_cost
 
-    class _IdxResult:
-        def __init__(self, cost: Decimal):
-            self.total_cost_usd = cost
-
-    def _fake_calc_index_cost(tokens: int, model: str | None = None):
-        return _IdxResult(Decimal("0.015"))
+    def _fake_calc_index_cost(tokens: int | None, model: str | None = None) -> IndexCostResult:
+        _ = model
+        return IndexCostResult(tokens=max(tokens or 0, 0), cost_usd=Decimal("0.015"))
 
     uploads_routes.calc_index_cost = _fake_calc_index_cost
     client.app.dependency_overrides[get_current_user] = lambda: user

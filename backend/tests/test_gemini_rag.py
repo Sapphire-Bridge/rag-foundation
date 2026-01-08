@@ -26,7 +26,7 @@ class TestGeminiRag:
 
                 # Should succeed after retries
                 result = rag.ask(
-                    question="test", store_names=["store1"], metadata_filter=None, model="gemini-2.5-flash"
+                    contents="test", store_names=["store1"], metadata_filter=None, model="gemini-2.5-flash"
                 )
 
                 assert mock_generate.call_count == 3

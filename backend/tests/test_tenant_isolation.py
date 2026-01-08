@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import io
 import uuid
-from types import SimpleNamespace
+from fastapi import Depends
+from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.models import Document, Store, DocumentStatus, User
@@ -40,7 +41,14 @@ def _create_store(db_session, user_id: int) -> Store:
 
 
 def test_upload_rejects_other_users_store(client, db_session):
-    attacker = SimpleNamespace(id=200)
+    attacker = User(
+        id=200,
+        email="user-200@example.com",
+        hashed_password="",
+        is_active=True,
+        email_verified=True,
+        is_admin=False,
+    )
     client.app.dependency_overrides[get_current_user] = lambda: attacker
     victim_store = _create_store(db_session, user_id=999)
     try:
@@ -56,7 +64,14 @@ def test_upload_rejects_other_users_store(client, db_session):
 
 
 def test_document_ops_enforce_tenant(client, db_session):
-    attacker = SimpleNamespace(id=202)
+    attacker = User(
+        id=202,
+        email="user-202@example.com",
+        hashed_password="",
+        is_active=True,
+        email_verified=True,
+        is_admin=False,
+    )
     client.app.dependency_overrides[get_current_user] = lambda: attacker
     victim_store = _create_store(db_session, user_id=321)
     try:
@@ -78,10 +93,24 @@ def test_document_ops_enforce_tenant(client, db_session):
 
 
 def test_chat_rejects_other_users_store(client, db_session):
-    attacker = SimpleNamespace(id=201)
+    attacker = User(
+        id=201,
+        email="user-201@example.com",
+        hashed_password="",
+        is_active=True,
+        email_verified=True,
+        is_admin=False,
+    )
     client.app.dependency_overrides[get_current_user] = lambda: attacker
     orig_get_current_user = chat_routes.get_current_user
-    chat_routes.get_current_user = lambda db, token: attacker
+
+    def _ov_get_current_user(
+        db: Session = Depends(chat_routes.get_db),
+        token: str = Depends(chat_routes.get_authorization),
+    ) -> User:
+        return attacker
+
+    chat_routes.get_current_user = _ov_get_current_user
     victim_store = _create_store(db_session, user_id=1234)
     try:
         resp = client.post(

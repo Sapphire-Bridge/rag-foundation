@@ -10,7 +10,8 @@ Key invariants:
 
 import os
 import pytest
-from typing import Generator
+import importlib
+from typing import Any, Generator
 
 # ============================================================================
 # Environment setup BEFORE any app imports
@@ -283,13 +284,10 @@ def no_sleep(monkeypatch):
 
 def _patch_module_sleep(monkeypatch, module_path: str):
     """Patch sleep in a module if it exists."""
+    if module_path not in {"app.services.ingestion", "app.routes.chat"}:
+        return
     try:
-        if module_path == "app.services.ingestion":
-            import app.services.ingestion as mod
-        elif module_path == "app.routes.chat":
-            import app.routes.chat as mod
-        else:
-            return
+        mod: Any = importlib.import_module(module_path)
         if hasattr(mod, "time"):
             monkeypatch.setattr(
                 mod.time,

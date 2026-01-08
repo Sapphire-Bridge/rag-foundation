@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from app.config import DEV_DEFAULT_JWT_SECRET, Settings
 
 
-def _base_prod_kwargs(**overrides: object) -> dict[str, object]:
-    kwargs: dict[str, object] = {
+def _base_prod_kwargs(**overrides: Any) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
         "ENVIRONMENT": "production",
         "DATABASE_URL": "postgresql+psycopg2://rag:pass@db:5432/rag",
         "JWT_SECRET": "x" * 64,
@@ -50,8 +52,8 @@ def test_production_disallows_default_db_passwords() -> None:
         Settings(**_base_prod_kwargs(DATABASE_URL=url))
 
 
-def _base_kwargs(**overrides: object) -> dict[str, object]:
-    base: dict[str, object] = {
+def _base_kwargs(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
         "ENVIRONMENT": "development",
         "JWT_SECRET": "x" * 64,
         "GEMINI_API_KEY": "test-key-12345678901234567890",
