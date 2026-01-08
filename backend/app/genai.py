@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import os
 from types import ModuleType, SimpleNamespace
-from typing import Any, Dict, Tuple
+from typing import Any, Callable
 
 from .config import settings
 
 
-def _build_genai_stub() -> Tuple[ModuleType, ModuleType, ModuleType]:
+def _build_genai_stub() -> tuple[Any, Any, Any]:
     """Create a minimal google.genai stub for tests and mock mode."""
-    genai_mod = ModuleType("google.genai")
-    types_mod = ModuleType("google.genai.types")
-    errors_mod = ModuleType("google.genai.errors")
+    genai_mod: Any = ModuleType("google.genai")
+    types_mod: Any = ModuleType("google.genai.types")
+    errors_mod: Any = ModuleType("google.genai.errors")
 
     class APIError(Exception):
         pass
@@ -31,18 +31,18 @@ def _build_genai_stub() -> Tuple[ModuleType, ModuleType, ModuleType]:
     errors_mod.DeadlineExceeded = DeadlineExceeded
 
     class Tool:
-        def __init__(self, **kwargs):
+        def __init__(self, **kwargs: Any) -> None:
             self.__dict__.update(kwargs)
 
     class FileSearch:
-        def __init__(self, **kwargs):
+        def __init__(self, **kwargs: Any) -> None:
             self.__dict__.update(kwargs)
 
     class FileSearchStore:
         """Placeholder object; real calls use SDK instances."""
 
     class GenerateContentConfig:
-        def __init__(self, **kwargs):
+        def __init__(self, **kwargs: Any) -> None:
             self.__dict__.update(kwargs)
 
     types_mod.Tool = Tool
@@ -51,26 +51,26 @@ def _build_genai_stub() -> Tuple[ModuleType, ModuleType, ModuleType]:
     types_mod.GenerateContentConfig = GenerateContentConfig
 
     class _DummyModels:
-        def __init__(self):
-            self.generate_content = lambda *args, **kwargs: SimpleNamespace()
-            self.generate_content_stream = lambda *args, **kwargs: []
+        def __init__(self) -> None:
+            self.generate_content: Callable[..., Any] = lambda *args, **kwargs: SimpleNamespace()
+            self.generate_content_stream: Callable[..., Any] = lambda *args, **kwargs: []
 
     class _DummyStores:
-        def list(self):
+        def list(self, *_args: Any, **_kwargs: Any) -> list[Any]:
             return []
 
-        def create(self, config):
+        def create(self, config: Any) -> Any:
             return SimpleNamespace(name="stores/mock")
 
-        def upload_to_file_search_store(self, **kwargs):
+        def upload_to_file_search_store(self, **kwargs: Any) -> Any:
             return SimpleNamespace(name="operations/mock")
 
     class _DummyOperations:
-        def get(self, *_args, **_kwargs):
+        def get(self, *_args: Any, **_kwargs: Any) -> Any:
             return SimpleNamespace(done=True, error=None)
 
     class Client:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             self.file_search_stores = _DummyStores()
             self.models = _DummyModels()
             self.operations = _DummyOperations()
@@ -92,19 +92,21 @@ if USE_GENAI_STUB:
     genai_module, types_module, errors_module = _build_genai_stub()
 else:
     try:
-        from google import genai as genai_module  # type: ignore
-        from google.genai import types as types_module, errors as errors_module  # type: ignore
+        from google import genai as _genai_module
+        from google.genai import errors as _errors_module
+        from google.genai import types as _types_module
     except Exception as exc:
         raise RuntimeError(
             "Failed to import google.genai. Set USE_GOOGLE_GENAI_STUB=1 to run without the SDK (mock mode only)."
         ) from exc
+    genai_module, types_module, errors_module = _genai_module, _types_module, _errors_module
 
-genai = genai_module
-types = types_module
-errors = errors_module
+genai: Any = genai_module
+types: Any = types_module
+errors: Any = errors_module
 
 
-def redact_llm_error(exc: BaseException | None) -> Dict[str, Any]:
+def redact_llm_error(exc: BaseException | None) -> dict[str, Any]:
     """
     Return a scrubbed view of an upstream LLM error that omits prompts/content.
     """

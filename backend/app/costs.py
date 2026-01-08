@@ -202,7 +202,8 @@ def acquire_budget_lock(db: Session, user_id: int) -> None:
     select. Failures are swallowed to avoid breaking requests.
     """
     try:
-        dialect = (db.bind.dialect.name if getattr(db, "bind", None) else "").lower()
+        bind = getattr(db, "bind", None)
+        dialect = (bind.dialect.name if bind is not None else "").lower()
     except Exception:
         dialect = ""
 
@@ -227,7 +228,7 @@ def pricing_configured() -> bool:
     return rates.get("input_price", 0) > 0 and rates.get("output_price", 0) > 0 and rates.get("index_price", 0) > 0
 
 
-def require_pricing_configured():
+def require_pricing_configured() -> None:
     if not pricing_configured():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

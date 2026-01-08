@@ -6,7 +6,7 @@ from sqlalchemy import func, or_
 from ..db import get_db
 from ..auth import get_current_user
 from ..schemas import CostsSummary
-from ..models import QueryLog
+from ..models import QueryLog, User
 from ..costs import user_budget, mtd_spend, require_pricing_configured
 
 router = APIRouter(prefix="/costs", tags=["costs"])
@@ -15,9 +15,9 @@ router = APIRouter(prefix="/costs", tags=["costs"])
 @router.get("/summary", response_model=CostsSummary)
 def costs_summary(
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user: User = Depends(get_current_user),
     _: None = Depends(require_pricing_configured),
-):
+) -> CostsSummary:
     now = datetime.datetime.now(datetime.timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 

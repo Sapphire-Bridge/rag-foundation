@@ -4,24 +4,29 @@ import ipaddress
 import logging
 import time
 from collections import defaultdict, deque
-from typing import Deque
+from types import ModuleType
+from typing import Awaitable, Callable, Deque, Any
 
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from starlette.responses import Response
 
 from .config import settings
 from .telemetry import log_json
 
+redis_lib: ModuleType | None
 try:
-    import redis
-except Exception:
-    redis = None
+    import redis as _redis_lib
+except Exception:  # pragma: no cover - optional dependency / minimal deployments
+    redis_lib = None
+else:
+    redis_lib = _redis_lib
 
 
 class InMemoryRateLimiter:
     """Lightweight dev/test fallback; not intended for high-concurrency or multi-process use."""
 
-    def __init__(self, max_keys: int = 5000, key_ttl_seconds: int = 900):
+    def __init__(self, max_keys: int = 5000, key_ttl_seconds: int = 900) -> None:
         # max_keys bounds the number of tracked principals; key_ttl_seconds prunes idle keys.
         self.store: dict[str, Deque[float]] = defaultdict(deque)
         self.last_seen: dict[str, float] = {}
@@ -38,7 +43,7 @@ class InMemoryRateLimiter:
     def _evict_if_needed(self) -> None:
         if len(self.last_seen) < self.max_keys:
             return
-        oldest_key = min(self.last_seen, key=self.last_seen.get)
+        oldest_key = min(self.last_seen, key=lambda k: self.last_seen[k])
         self.store.pop(oldest_key, None)
         self.last_seen.pop(oldest_key, None)
 
@@ -69,7 +74,7 @@ class InMemoryRateLimiter:
 
 
 class RedisRateLimiter:
-    def __init__(self, client: "redis.Redis"):
+    def __init__(self, client: Any) -> None:
         self.client = client
 
     def check(self, key: str, limit: int, window: int) -> tuple[int, int]:
@@ -98,14 +103,14 @@ class RedisRateLimiter:
 
 
 class RateLimiter:
-    def __init__(self, redis_client: "redis.Redis | None"):
+    def __init__(self, redis_client: Any | None) -> None:
         self._memory_limiter = InMemoryRateLimiter()
         self._redis_limiter = RedisRateLimiter(redis_client) if redis_client else None
         self._fallback_logged = False
         self._no_redis_logged = False
 
     @property
-    def store(self):
+    def store(self) -> dict[str, Deque[float]]:
         # Expose in-memory store for tests/backwards compatibility.
         return self._memory_limiter.store
 
@@ -134,9 +139,9 @@ class RateLimiter:
 
 
 _r = None
-if settings.REDIS_URL and redis is not None:
+if settings.REDIS_URL and redis_lib is not None:
     try:
-        _r = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        _r = redis_lib.Redis.from_url(settings.REDIS_URL, decode_responses=True)
     except Exception as exc:
         logging.warning("Failed to init Redis for rate limiting: %s", exc)
         _r = None
@@ -179,7 +184,7 @@ def check_rate_limit(key: str, limit: int, window: int = 60) -> tuple[int, int]:
     return limiter.check(key, limit, window)
 
 
-async def rate_limit_middleware(request: Request, call_next):
+async def rate_limit_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
     ip = _resolved_client_ip(request)
     key = f"ip:{ip}"
     authz = request.headers.get("authorization")
@@ -202,7 +207,7 @@ async def rate_limit_middleware(request: Request, call_next):
         remaining, _ = check_rate_limit(key, limit)
     except HTTPException as exc:
         # Return a proper response so outer middleware (correlation, etc.) can decorate it.
-        headers = exc.headers or {}
+        headers = dict(exc.headers or {})
         headers.setdefault("X-RateLimit-Limit", str(limit))
         headers.setdefault("X-RateLimit-Remaining", "0")
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=headers)

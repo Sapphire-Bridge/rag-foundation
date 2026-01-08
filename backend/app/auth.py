@@ -3,7 +3,7 @@
 import time
 import uuid
 import logging
-from typing import Optional
+from typing import Any, Optional, Protocol, cast
 
 import bcrypt
 from fastapi import Header, Depends, HTTPException, status
@@ -26,12 +26,20 @@ class PasswordValidationError(ValueError):
 _SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?/~`"
 
 # Redis connection for JWT revocation (optional, only in production)
-_rev: Optional[object] = None
+
+
+class _RevocationClient(Protocol):
+    def setex(self, name: str, time: int, value: str) -> Any: ...
+
+    def exists(self, name: str) -> int: ...
+
+
+_rev: _RevocationClient | None = None
 if settings.REDIS_URL:
     try:
         import redis
 
-        _rev = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        _rev = cast(_RevocationClient, redis.Redis.from_url(settings.REDIS_URL, decode_responses=True))
     except Exception:
         _rev = None
 
@@ -154,13 +162,13 @@ def revoke_jti(jti: str, exp: int) -> None:
         jti: JWT ID to revoke
         exp: Token expiration timestamp (used to set Redis TTL)
     """
-    if _rev and jti:
+    if _rev is not None and jti:
         ttl = max(0, exp - int(time.time()))
         if ttl > 0:
             _rev.setex(f"revoked:{jti}", ttl, "1")
 
 
-def decode_token(token: str) -> dict:
+def decode_token(token: str) -> dict[str, Any]:
     return jwt.decode(
         token,
         settings.JWT_SECRET,
@@ -180,13 +188,16 @@ def get_authorization(authorization: Optional[str] = Header(None)) -> str:
 def get_current_user(db: Session = Depends(get_db), token: str = Depends(get_authorization)) -> User:
     try:
         payload = decode_token(token)
-        user_id = int(payload.get("sub"))
+        sub = payload.get("sub")
+        if not isinstance(sub, str) or not sub.strip():
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        user_id = int(sub)
     except (JWTError, ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     # Check if token has been revoked
     jti = payload.get("jti")
-    if _rev and jti:
+    if _rev is not None and isinstance(jti, str) and jti:
         try:
             if _rev.exists(f"revoked:{jti}"):
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")

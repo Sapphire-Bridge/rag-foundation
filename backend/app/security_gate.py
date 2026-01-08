@@ -84,7 +84,7 @@ def run_security_gate() -> None:
                 "CRITICAL SECURITY ERROR: REDIS_URL must be set in staging/production when Redis is required."
             )
         try:
-            import redis  # type: ignore
+            import redis
         except ImportError as exc:  # pragma: no cover - startup guard
             raise RuntimeError(
                 "CRITICAL SECURITY ERROR: Redis driver not installed. "

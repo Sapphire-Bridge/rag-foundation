@@ -6,12 +6,18 @@ from __future__ import annotations
 
 import logging
 import datetime
+from typing import Callable
+
 from fastapi import BackgroundTasks
+from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..models import Document, Store
 from ..services.gemini_rag import get_rag_client
 from ..telemetry import log_json
+
+
+SessionFactory = Callable[[], Session]
 
 
 def enqueue_store_cleanup(background: BackgroundTasks, *, store_id: int, store_fs_name: str) -> None:
@@ -38,7 +44,7 @@ def _delete_remote_store(store_id: int, store_fs_name: str) -> None:
         )
 
 
-def _delete_remote_document(document_id: int, session_factory=None) -> None:
+def _delete_remote_document(document_id: int, session_factory: SessionFactory | None = None) -> None:
     """Best-effort cleanup for Gemini files belonging to a deleted document."""
     session_factory = session_factory or SessionLocal
     db = session_factory()
@@ -83,7 +89,9 @@ def _delete_remote_document(document_id: int, session_factory=None) -> None:
         db.close()
 
 
-def cleanup_stale_stores(*, grace_hours: int = 48, batch_size: int = 50, session_factory=None) -> None:
+def cleanup_stale_stores(
+    *, grace_hours: int = 48, batch_size: int = 50, session_factory: SessionFactory | None = None
+) -> None:
     """
     Background janitor for soft-deleted or expired stores.
     Safe guardrails: grace period, batch limit, skip if active docs remain.

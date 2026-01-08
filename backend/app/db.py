@@ -1,5 +1,8 @@
+from typing import Any, Generator
+
 from fastapi import Request
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 from .config import settings
@@ -28,7 +31,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, futu
 Base = declarative_base()
 
 
-def create_engine_from_settings(current_settings=settings):
+def create_engine_from_settings(current_settings: Any = settings) -> Engine:
     """Factory for creating an engine from settings (injectable for tests)."""
     is_sqlite_local = current_settings.DATABASE_URL.startswith("sqlite")
     connect_args_local = {"check_same_thread": False} if is_sqlite_local else {}
@@ -42,7 +45,7 @@ def create_engine_from_settings(current_settings=settings):
     return create_engine(current_settings.DATABASE_URL, **kwargs)
 
 
-def create_session_factory(bind_engine) -> sessionmaker:
+def create_session_factory(bind_engine: Engine) -> sessionmaker:
     """Create a sessionmaker bound to the given engine."""
     return sessionmaker(bind=bind_engine, autoflush=False, autocommit=False, future=True)
 
@@ -52,7 +55,7 @@ def get_session_factory(request: Request) -> sessionmaker:
     return getattr(request.app.state, "SessionLocal", SessionLocal)
 
 
-def get_db(request: Request):
+def get_db(request: Request) -> Generator[Session, None, None]:
     """
     Yield a database session.
 

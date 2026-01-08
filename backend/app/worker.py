@@ -7,13 +7,14 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-from typing import Optional
+from typing import Any, Callable, Optional, cast
 from urllib.parse import unquote, urlparse
 
 from arq import cron, run_worker
 from arq.connections import RedisSettings, create_pool
 
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import SessionLocal
@@ -47,11 +48,11 @@ def _redis_settings_from_url(url: Optional[str]) -> Optional[RedisSettings]:
 
 
 _redis_settings = _redis_settings_from_url(settings.REDIS_URL)
-_arq_pool = None
+_arq_pool: Any | None = None
 _pool_lock: Optional[asyncio.Lock] = None
 
 
-async def get_worker_pool():
+async def get_worker_pool() -> Any:
     global _arq_pool
     global _pool_lock
     if _arq_pool:
@@ -67,7 +68,7 @@ async def get_worker_pool():
     return _arq_pool
 
 
-async def enqueue_ingestion_job(store_id: int, document_id: int, local_path: str):
+async def enqueue_ingestion_job(store_id: int, document_id: int, local_path: str) -> Any:
     pool = await get_worker_pool()
     return await pool.enqueue_job("index_document_job", store_id, document_id, local_path)
 
@@ -76,7 +77,10 @@ def has_ingestion_queue() -> bool:
     return _redis_settings is not None
 
 
-async def reset_stuck_documents(_ctx, session_factory=None):
+SessionFactory = Callable[[], Session]
+
+
+def _reset_stuck_documents(*, session_factory: SessionFactory | None = None) -> None:
     """
     Cron task to reset documents stuck in RUNNING longer than WATCHDOG_TTL_MINUTES.
     """
@@ -110,6 +114,11 @@ async def reset_stuck_documents(_ctx, session_factory=None):
         session.close()
 
 
+async def reset_stuck_documents(_ctx: dict[Any, Any], *args: Any, **kwargs: Any) -> None:
+    session_factory = cast(SessionFactory | None, kwargs.get("session_factory"))
+    _reset_stuck_documents(session_factory=session_factory)
+
+
 class WorkerSettings:
     functions = [index_document_job, reset_stuck_documents]
     redis_settings = _redis_settings
@@ -117,7 +126,7 @@ class WorkerSettings:
     job_timeout = 300
     cron_jobs = [
         cron(
-            reset_stuck_documents,
+            cast(Any, reset_stuck_documents),
             minute={m for m in range(0, 60, max(1, settings.WATCHDOG_CRON_MINUTES))},
         )
     ]
@@ -126,7 +135,7 @@ class WorkerSettings:
 def run_worker_main() -> None:
     if _redis_settings is None:
         raise RuntimeError("Redis must be available to start the ingestion worker.")
-    run_worker("app.worker.WorkerSettings")
+    run_worker(cast(Any, WorkerSettings))
 
 
 if __name__ == "__main__":

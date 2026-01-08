@@ -39,7 +39,7 @@ def list_users(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
     limit: int = Query(100, ge=1, le=500),
-):
+) -> list[AdminUserOut]:
     _admin_rate_limit(admin_user, "list_users")
     rows = db.query(User).options(joinedload(User.budget)).order_by(User.id.desc()).limit(limit).all()
     return [
@@ -62,7 +62,7 @@ def set_user_role(
     payload: AdminUserRoleUpdate,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
-):
+) -> AdminUserOut:
     _admin_rate_limit(admin_user, "set_user_role")
     target = db.get(User, user_id)
     if not target:
@@ -105,14 +105,15 @@ def upsert_budget(
     payload: BudgetUpdate,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
-):
+) -> BudgetUpdate:
     _admin_rate_limit(admin_user, "set_budget")
-    limit = Decimal(str(payload.monthly_limit_usd))
+    limit_dec = Decimal(str(payload.monthly_limit_usd))
+    limit = float(limit_dec)
     budget = db.query(Budget).filter(Budget.user_id == user_id).one_or_none()
     if budget:
-        budget.monthly_limit_usd = limit
+        budget.monthly_limit_usd = limit_dec
     else:
-        budget = Budget(user_id=user_id, monthly_limit_usd=limit)
+        budget = Budget(user_id=user_id, monthly_limit_usd=limit_dec)
         db.add(budget)
     db.commit()
 
@@ -122,10 +123,10 @@ def upsert_budget(
         action="set_budget",
         target_type="user",
         target_id=str(user_id),
-        metadata={"monthly_limit_usd": float(limit)},
+        metadata={"monthly_limit_usd": limit},
     )
-    log_json(20, "admin_set_budget", admin_id=admin_user.id, target_user_id=user_id, monthly_limit=float(limit))
-    return BudgetUpdate(monthly_limit_usd=float(limit))
+    log_json(20, "admin_set_budget", admin_id=admin_user.id, target_user_id=user_id, monthly_limit=limit)
+    return BudgetUpdate(monthly_limit_usd=limit)
 
 
 @router.get("/audit", response_model=list[AdminAuditEntry])
@@ -133,7 +134,7 @@ def list_audit_logs(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
     limit: int = Query(50, ge=1, le=200),
-):
+) -> list[AdminAuditEntry]:
     _admin_rate_limit(admin_user, "list_audit")
     rows = db.query(AdminAuditLog).order_by(AdminAuditLog.created_at.desc()).limit(limit).all()
     return [
@@ -154,7 +155,7 @@ def list_audit_logs(
 def system_summary(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
-):
+) -> AdminSystemSummary:
     _admin_rate_limit(admin_user, "system_summary")
     user_count = db.query(func.count(User.id)).scalar() or 0
     store_count = db.query(func.count(Store.id)).scalar() or 0
@@ -177,7 +178,7 @@ def admin_reset_stuck(
     body: WatchdogResetRequest,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
-):
+) -> WatchdogResetResponse:
     _admin_rate_limit(admin_user, "watchdog_reset")
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=body.ttl_minutes)
     query = (
@@ -231,17 +232,22 @@ def admin_reset_stuck(
 def get_deletion_audit(
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
-):
+) -> list[DeletionAuditEntry]:
     _admin_rate_limit(admin_user, "deletion_audit")
     deleted_stores = (
         db.query(Store).filter(Store.deleted_at.isnot(None)).options(joinedload(Store.deleted_by_user)).all()
     )
 
-    return [
-        DeletionAuditEntry(
-            store_id=s.id,
-            deleted_at=s.deleted_at,
-            deleted_by=s.deleted_by_user.email if s.deleted_by_user else None,
+    out: list[DeletionAuditEntry] = []
+    for store in deleted_stores:
+        deleted_at = store.deleted_at
+        if deleted_at is None:
+            continue
+        out.append(
+            DeletionAuditEntry(
+                store_id=store.id,
+                deleted_at=deleted_at,
+                deleted_by=store.deleted_by_user.email if store.deleted_by_user else None,
+            )
         )
-        for s in deleted_stores
-    ]
+    return out
