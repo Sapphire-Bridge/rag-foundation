@@ -10,7 +10,6 @@ Key invariants:
 
 import os
 import pytest
-import importlib
 from typing import Any, Generator
 
 # ============================================================================
@@ -284,25 +283,33 @@ def no_sleep(monkeypatch):
 
 def _patch_module_sleep(monkeypatch, module_path: str):
     """Patch sleep in a module if it exists."""
-    if module_path not in {"app.services.ingestion", "app.routes.chat"}:
-        return
     try:
-        mod: Any = importlib.import_module(module_path)
-        if hasattr(mod, "time"):
-            monkeypatch.setattr(
-                mod.time,
-                "sleep",
-                lambda _: (_ for _ in ()).throw(RuntimeError(f"sleep blocked in {module_path}")),
-            )
-        if hasattr(mod, "sleep"):
-            monkeypatch.setattr(
-                mod,
-                "sleep",
-                lambda _: (_ for _ in ()).throw(RuntimeError(f"sleep blocked in {module_path}")),
-                raising=False,
-            )
-    except (ImportError, AttributeError):
-        pass
+        if module_path == "app.services.ingestion":
+            import app.services.ingestion as ingestion_mod
+
+            mod: Any = ingestion_mod
+        elif module_path == "app.routes.chat":
+            import app.routes.chat as chat_mod
+
+            mod = chat_mod
+        else:
+            return
+    except ImportError:
+        return
+
+    if hasattr(mod, "time"):
+        monkeypatch.setattr(
+            mod.time,
+            "sleep",
+            lambda _: (_ for _ in ()).throw(RuntimeError(f"sleep blocked in {module_path}")),
+        )
+    if hasattr(mod, "sleep"):
+        monkeypatch.setattr(
+            mod,
+            "sleep",
+            lambda _: (_ for _ in ()).throw(RuntimeError(f"sleep blocked in {module_path}")),
+            raising=False,
+        )
 
 
 # ============================================================================
