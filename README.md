@@ -7,7 +7,6 @@
 
 # RAG Assistant
 [![CI Basic](https://github.com/Sapphire-Bridge/rag-foundation/actions/workflows/ci-basic.yml/badge.svg)](https://github.com/Sapphire-Bridge/rag-foundation/actions/workflows/ci-basic.yml)
-[![CI Strict](https://github.com/Sapphire-Bridge/rag-foundation/actions/workflows/ci-strict.yml/badge.svg)](https://github.com/Sapphire-Bridge/rag-foundation/actions/workflows/ci-strict.yml)
 
 A production starter package RAG (Retrieval-Augmented Generation) assistant with JWT authentication, tenant isolation, and comprehensive observability.
 
