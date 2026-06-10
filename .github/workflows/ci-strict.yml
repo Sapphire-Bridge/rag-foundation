@@ -51,7 +51,7 @@ jobs:
           docker build -t rag-backend:ci backend
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: rag-backend:ci
           severity: CRITICAL,HIGH
@@ -59,7 +59,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "18"
+          node-version: "20"
 
       - name: Install frontend dependencies
         run: |
