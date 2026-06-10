@@ -9,6 +9,7 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.example
 *.db
 .mypy_cache/
 .pytest_cache/
