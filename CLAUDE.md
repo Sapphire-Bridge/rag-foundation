@@ -6,7 +6,7 @@ Repo Context Index (agent-discoverable)
 - Context 003 — Frontend UI & Integration: docs/context/CONTEXT-003.md
 - Context 004 — Migrations, Tests, OpenAPI, Ops: docs/context/CONTEXT-004.md
 
-**Last Updated**: 2025-11-20
+**Last Updated**: 2026-06-10
 **Version**: 0.2.1
 **License**: Apache 2.0
 
@@ -47,11 +47,11 @@ A production-ready RAG (Retrieval-Augmented Generation) web application that ena
 
 ### Project Statistics
 
-- **Backend**: ~1,434 lines of Python (FastAPI)
-- **Frontend**: ~274 lines of TypeScript/React
-- **Database Models**: 5 tables (User, Store, Document, QueryLog, Budget)
-- **API Endpoints**: 14 endpoints across 5 routers
-- **Test Coverage**: ≥80% required
+- **Backend**: ~11,000 lines of Python (FastAPI)
+- **Frontend**: ~4,500 lines of TypeScript/React
+- **Database Models**: 7 ORM models (User, Store, Document, QueryLog, Budget, AuthSession, plus chat/session tables)
+- **API**: ~26 endpoints across 8 routers
+- **Tests**: 110+ backend test functions; ≥80% coverage required
 
 ---
 
