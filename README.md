@@ -1,14 +1,9 @@
-<!-- Repo Context Index: agent-discoverable -->
-- Context 001 — Backend Core, Config, Security: docs/context/CONTEXT-001.md
-- Context 002 — Backend Models, Routes, RAG: docs/context/CONTEXT-002.md
-- Context 003 — Frontend UI & Integration: docs/context/CONTEXT-003.md
-- Context 004 — Migrations, Tests, OpenAPI, Ops: docs/context/CONTEXT-004.md
-- Context 005 — Benchmark Runner: docs/context/CONTEXT-005.md
-
 # RAG Assistant
 [![CI Basic](https://github.com/Sapphire-Bridge/rag-foundation/actions/workflows/ci-basic.yml/badge.svg)](https://github.com/Sapphire-Bridge/rag-foundation/actions/workflows/ci-basic.yml)
 
-A production starter package RAG (Retrieval-Augmented Generation) assistant with JWT authentication, tenant isolation, and comprehensive observability.
+A production-minded RAG (Retrieval-Augmented Generation) reference for authenticated, multi-tenant document Q&A: streaming answers with **source citations**, per-user **cost budgets**, JWT auth with tenant isolation, rate limiting, audit trails, and first-class observability.
+
+_Built and maintained by [Felix Borck](https://sapphire-bridge.github.io) — applied-AI engineer focused on retrieval, provenance, and deploying LLMs in regulated, audited environments._
 
 ## 🚀 Quickstart (Docker)
 
@@ -603,6 +598,7 @@ cloud log sinks, or cron-based rotation).
 ## Documentation
 
 - **[CLAUDE.md](CLAUDE.md)**: Comprehensive guide for AI assistants and contributors
+- **[docs/context/](docs/context/)**: Agent-discoverable, per-subsystem deep-dives (CONTEXT-001…005: backend core, models/routes/RAG, frontend, ops, benchmarks)
 - **[CONTRIBUTING.md](CONTRIBUTING.md)**: Guidelines for contributing
 - **[SECURITY.md](SECURITY.md)**: Security policy and vulnerability reporting
 - **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)**: Community guidelines
