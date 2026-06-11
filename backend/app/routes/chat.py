@@ -637,13 +637,12 @@ def _log_failed_stream(
         )
         log_db.add(ql)
         log_db.commit()
-    except Exception as e:
+    except Exception:
         logging.error(
             "Failed to log failed stream cost",
             extra={
                 "user_id": "[REDACTED]",
                 "failure_site": "failed_stream_cost",
-                "error_type": type(e).__name__,
             },
         )
         log_db.rollback()
@@ -758,13 +757,12 @@ def _finalize_and_persist(
         try:
             log_db.add(ql)
             log_db.commit()
-        except Exception as e:
+        except Exception:
             logging.error(
                 "Failed to log query cost",
                 extra={
                     "user_id": "[REDACTED]",
                     "failure_site": "query_cost",
-                    "error_type": type(e).__name__,
                 },
             )
             log_db.rollback()

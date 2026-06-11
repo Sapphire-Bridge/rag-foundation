@@ -273,7 +273,6 @@ def test_log_failed_stream_cost_log_uses_safe_structured_fields(monkeypatch):
     assert kwargs["extra"] == {
         "user_id": "[REDACTED]",
         "failure_site": "failed_stream_cost",
-        "error_type": "RuntimeError",
     }
     assert "123" not in str(kwargs["extra"])
 
@@ -323,6 +322,5 @@ def test_finalize_and_persist_cost_log_uses_safe_structured_fields(monkeypatch):
     assert kwargs["extra"] == {
         "user_id": "[REDACTED]",
         "failure_site": "query_cost",
-        "error_type": "RuntimeError",
     }
     assert "123" not in str(kwargs["extra"])
