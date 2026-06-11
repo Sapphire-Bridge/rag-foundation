@@ -321,9 +321,10 @@ def test_finalize_and_persist_cost_log_uses_actor_ref_not_raw_user_id(monkeypatc
     assert captured["closed"] is True
     assert captured["args"] == ("Failed to log query cost",)
     kwargs = captured["kwargs"]
-    assert kwargs["exc_info"] is True
+    assert "exc_info" not in kwargs
     assert kwargs["extra"] == {
         "actor_ref": chat_routes._audit_actor_ref(123),
+        "error_type": "RuntimeError",
         "cost": 0.0,
         "model": "gemini-2.5-flash",
     }

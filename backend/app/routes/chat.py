@@ -766,12 +766,12 @@ def _finalize_and_persist(
         try:
             log_db.add(ql)
             log_db.commit()
-        except Exception:
+        except Exception as e:
             logging.error(
                 "Failed to log query cost",
-                exc_info=True,
                 extra={
                     "actor_ref": _audit_actor_ref(user_id),
+                    "error_type": type(e).__name__,
                     "cost": float(cost_result.total_cost_usd),
                     "model": model,
                 },
