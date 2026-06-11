@@ -217,7 +217,7 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(get_aut
     user = db.get(User, int(user_id))
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    if not getattr(user, "is_active", True):
+    if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
     try:
         bind_user_context(user.id)
