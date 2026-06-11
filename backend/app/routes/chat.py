@@ -3,10 +3,15 @@
 import asyncio
 import datetime
 import json
+import logging
+import queue
+import threading
 import time
 import uuid
+from contextlib import aclosing
+from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, Iterator, List, NamedTuple, Optional
 from fastapi import APIRouter, Body, Request, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.responses import StreamingResponse
@@ -20,6 +25,7 @@ from ..auth import get_authorization, get_current_user
 from ..db import get_db, get_session_factory
 from ..models import QueryLog, ChatHistory, ChatSession
 from ..costs import (
+    QueryCostResult,
     acquire_budget_lock,
     calc_query_cost,
     mtd_spend,
@@ -419,6 +425,369 @@ def _ensure_chat_session(
     db.flush()
 
 
+@dataclass
+class _StreamState:
+    """
+    Mutable per-request stream state shared by the SSE generator and helpers.
+
+    Stream contract:
+    - Success: start -> text-start -> text-delta* -> text-end -> source-document* -> finish -> [DONE]
+    - Error: error -> [DONE] after capacity/backpressure/upstream/unexpected failures.
+    - Budget stop: budget_exceeded -> [DONE].
+    """
+
+    last_send: float
+    stream_failed: bool = False
+    budget_exhausted: bool = False
+    error_sent: bool = False
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    completion_tokens_used: int = 0
+    final_resp: Any = None
+    has_emitted_delta: bool = False
+    assistant_text_parts: list[str] = field(default_factory=list)
+
+
+def _mark_error(
+    state: _StreamState,
+    code: str,
+    message: str,
+    status_code: int | None = None,
+    retry_after_ms: int | None = None,
+) -> str:
+    """Record an error on the stream state and return its SSE frame."""
+    state.error_sent = True
+    state.last_error_code = code
+    state.last_error_message = message
+    return _sse_error(code, message, status=status_code, retry_after_ms=retry_after_ms)
+
+
+_PumpEvent = tuple[str, Any]
+
+
+async def _pump_gemini_stream(
+    req: Request,
+    rag: Any,
+    *,
+    contents: list[dict[str, Any]],
+    system: str | None,
+    fs_names: list[str],
+    metadata_filter: dict[str, Any] | None,
+    model: str,
+    keepalive_interval: float | None,
+    state: _StreamState,
+) -> AsyncGenerator[_PumpEvent, None]:
+    """
+    Run one synchronous Gemini stream attempt in a daemon thread.
+
+    Transport only: SSE frame formatting, budget accounting and persistence
+    stay in the caller so the wire contract remains in one place.
+    """
+    chunk_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue(maxsize=20)
+    stop_event = threading.Event()
+    producer_error: Exception | None = None
+
+    def _put_nowait(msg: tuple[str, Any]) -> None:
+        try:
+            chunk_queue.put_nowait(msg)
+        except queue.Full:
+            pass
+
+    def run_stream_in_thread() -> None:
+        nonlocal producer_error
+        try:
+            for chunk in rag.ask_stream(
+                contents=contents,
+                system=system,
+                store_names=fs_names,
+                metadata_filter=metadata_filter,
+                model=model,
+            ):
+                if stop_event.is_set():
+                    break
+                try:
+                    chunk_queue.put(("chunk", chunk), timeout=0.1)
+                except queue.Full:
+                    producer_error = StreamBackpressureError("Stream backpressure: chunk queue full")
+                    stop_event.set()
+                    _put_nowait(("error", producer_error))
+                    return
+            _put_nowait(("done", None))
+        except Exception as e:
+            producer_error = e
+            _put_nowait(("error", e))
+
+    stream_thread = threading.Thread(target=run_stream_in_thread, daemon=True)
+    stream_thread.start()
+
+    try:
+        while True:
+            if await req.is_disconnected():
+                logging.info("Client disconnected mid-stream")
+                state.stream_failed = True
+                stop_event.set()
+                yield ("disconnect", None)
+                return
+            try:
+                msg_type, data = chunk_queue.get(timeout=0.1)
+            except queue.Empty:
+                if not stream_thread.is_alive():
+                    if producer_error is not None:
+                        raise producer_error
+                    return
+                if await req.is_disconnected():
+                    logging.info("Client disconnected mid-stream")
+                    state.stream_failed = True
+                    stop_event.set()
+                    yield ("disconnect", None)
+                    return
+                if keepalive_interval:
+                    now = time.monotonic()
+                    if now - state.last_send >= keepalive_interval:
+                        yield ("keepalive", now)
+                continue
+
+            if msg_type == "done":
+                return
+            if msg_type == "error":
+                raise data
+            if msg_type == "chunk":
+                if await req.is_disconnected():
+                    logging.info("Client disconnected mid-stream")
+                    state.stream_failed = True
+                    stop_event.set()
+                    yield ("disconnect", None)
+                    return
+                yield ("chunk", data)
+    finally:
+        stop_event.set()
+        stream_thread.join(timeout=1.0)
+        if stream_thread.is_alive():
+            logging.warning("Stream thread still running after cancel")
+
+
+def _estimated_cost_exceeds(
+    model: str, prompt_tokens: int, completion_tokens: int, remaining_budget_usd: Decimal
+) -> bool:
+    """Mid-stream budget check based on estimated token usage so far."""
+    return calc_query_cost(model, prompt_tokens, completion_tokens).total_cost_usd > remaining_budget_usd
+
+
+def _citation_frames(rag: Any, final_resp: Any) -> Iterator[str]:
+    """Map extracted citations to unchanged source-document SSE frames."""
+    for c in rag.extract_citations_from_response(final_resp):
+        payload = {
+            "type": "source-document",
+            "sourceId": f"cit-{c['index']}",
+            "mediaType": "file",
+            "title": c.get("title") or c.get("uri") or "Source",
+            "snippet": c.get("snippet"),
+        }
+        yield f"data: {json.dumps(payload)}\n\n"
+
+
+def _finish_frame(*, prompt_tokens: int, completion_tokens: int, model: str) -> str:
+    """Build the terminal success frame consumed by the frontend SSE adapter."""
+    payload = {
+        "type": "finish",
+        "finishReason": "stop",
+        "promptTokens": prompt_tokens,
+        "completionTokens": completion_tokens,
+        # Transitional compatibility for older clients that read nested usage.
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "model": model,
+        },
+    }
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def _log_failed_stream(
+    session_factory: sessionmaker,
+    *,
+    user_id: int,
+    store_id: int | None,
+    model: str,
+    project_id: int | None,
+    tags: dict[str, str] | None,
+    error_code: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> None:
+    """Record cost metadata for a failed stream."""
+    failure_tags = dict(tags or {})
+    failure_tags["error_code"] = error_code
+    cost_usd = (
+        calc_query_cost(model, prompt_tokens, completion_tokens).total_cost_usd
+        if completion_tokens > 0
+        else Decimal("0")
+    )
+    log_db = session_factory()
+    try:
+        ql = QueryLog(
+            user_id=user_id,
+            store_id=store_id,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=cost_usd,
+            model=model,
+            project_id=project_id,
+            tags=failure_tags or None,
+        )
+        log_db.add(ql)
+        log_db.commit()
+    except Exception:
+        logging.error(
+            "Failed to log failed stream cost",
+            extra={
+                "user_id": "[REDACTED]",
+                "failure_site": "failed_stream_cost",
+            },
+        )
+        log_db.rollback()
+    finally:
+        log_db.close()
+
+
+def _resolve_final_usage(
+    final_resp: Any,
+    *,
+    prompt_tokens_est: int,
+    completion_tokens_est: int,
+    assistant_text_parts: list[str],
+    user_id: int,
+    model: str,
+) -> tuple[int, int]:
+    """Prefer SDK usage metadata, falling back to local estimates when absent."""
+    usage = None
+    prompt_toks = prompt_tokens_est
+    completion_toks = completion_tokens_est
+    if final_resp is not None:
+        usage = getattr(final_resp, "usage_metadata", None) or getattr(
+            getattr(final_resp, "candidates", [None])[0], "usage_metadata", None
+        )
+    if usage:
+        prompt_count = getattr(usage, "prompt_token_count", None)
+        if prompt_count is not None:
+            try:
+                prompt_toks = int(prompt_count)
+            except (TypeError, ValueError):
+                pass
+        completion_count = getattr(usage, "candidates_token_count", None)
+        if completion_count is not None:
+            try:
+                completion_toks = int(completion_count)
+            except (TypeError, ValueError):
+                pass
+    else:
+        if not completion_toks:
+            completion_toks = _estimate_tokens_from_text("".join(assistant_text_parts))
+        log_json(
+            30,
+            "chat_usage_metadata_missing",
+            user_id=user_id,
+            model=model,
+            prompt_tokens=prompt_toks,
+            completion_tokens=completion_toks,
+        )
+    return prompt_toks, completion_toks
+
+
+class _FinalizeResult(NamedTuple):
+    prompt_tokens: int
+    completion_tokens: int
+    cost_result: QueryCostResult
+    over_budget: bool
+
+
+def _finalize_and_persist(
+    session_factory: sessionmaker,
+    *,
+    user_id: int,
+    store_id_for_cost: int | None,
+    store_id_for_history: int | None,
+    session_id: str,
+    model: str,
+    project_id: int | None,
+    tags: dict[str, str] | None,
+    final_resp: Any,
+    prompt_tokens_est: int,
+    completion_tokens_est: int,
+    assistant_text_parts: list[str],
+) -> _FinalizeResult:
+    """
+    Post-stream accounting and persistence.
+
+    The caller emits SSE frames; this helper only resolves usage, records cost,
+    applies the post-cost budget check, and persists the assistant message.
+    """
+    prompt_toks, completion_toks = _resolve_final_usage(
+        final_resp,
+        prompt_tokens_est=prompt_tokens_est,
+        completion_tokens_est=completion_tokens_est,
+        assistant_text_parts=assistant_text_parts,
+        user_id=user_id,
+        model=model,
+    )
+
+    cost_result = calc_query_cost(model, prompt_toks, completion_toks)
+    if prompt_toks:
+        token_usage_total.labels(model=model, type="prompt").inc(prompt_toks)
+    if completion_toks:
+        token_usage_total.labels(model=model, type="completion").inc(completion_toks)
+
+    over_budget = False
+    log_db = session_factory()
+    try:
+        if cost_result.total_cost_usd > 0:
+            acquire_budget_lock(log_db, user_id)
+            over_budget = would_exceed_budget(log_db, user_id, cost_result.total_cost_usd)
+
+        ql = QueryLog(
+            user_id=user_id,
+            store_id=store_id_for_cost,
+            prompt_tokens=cost_result.prompt_tokens,
+            completion_tokens=cost_result.completion_tokens,
+            cost_usd=cost_result.total_cost_usd,
+            model=model,
+            project_id=project_id,
+            tags=tags,
+        )
+        try:
+            log_db.add(ql)
+            log_db.commit()
+        except Exception:
+            logging.error(
+                "Failed to log query cost",
+                extra={
+                    "user_id": "[REDACTED]",
+                    "failure_site": "query_cost",
+                },
+            )
+            log_db.rollback()
+
+        assistant_text = "".join(assistant_text_parts).strip()
+        if assistant_text:
+            _persist_chat_message(
+                log_db,
+                user_id=user_id,
+                store_id=store_id_for_history,
+                session_id=session_id,
+                role="assistant",
+                content=assistant_text,
+            )
+    finally:
+        log_db.close()
+
+    return _FinalizeResult(
+        prompt_tokens=prompt_toks,
+        completion_tokens=completion_toks,
+        cost_result=cost_result,
+        over_budget=over_budget,
+    )
+
+
 @router.post(
     "",
     response_class=StreamingResponse,
@@ -603,43 +972,23 @@ async def chat_stream(
         db.close()
 
     async def generator() -> AsyncGenerator[str, None]:
-        import logging
-        import queue
-        import threading
-
         keepalive_interval = settings.STREAM_KEEPALIVE_SECS if settings.STREAM_KEEPALIVE_SECS > 0 else None
-        last_send = time.monotonic()
-        stream_failed = False
-        budget_exhausted = False
-        error_sent = False
-        last_error_code: str | None = None
-        last_error_message: str | None = None
-        assistant_text_parts: list[str] = []
-        completion_tokens_used = 0
+        state = _StreamState(last_send=time.monotonic())
         prompt_tokens_used = prompt_tokens_est
 
         message_id, text_id = rag.new_stream_ids()
 
-        final_resp = None
         max_retries = settings.GEMINI_STREAM_RETRY_ATTEMPTS
         retry_count = 0
         sem_acquired = False
-
-        def _send_error(
-            code: str, message: str, status_code: int | None = None, retry_after_ms: int | None = None
-        ) -> str:
-            nonlocal error_sent, last_error_code, last_error_message
-            error_sent = True
-            last_error_code = code
-            last_error_message = message
-            return _sse_error(code, message, status=status_code, retry_after_ms=retry_after_ms)
 
         try:
             try:
                 await asyncio.wait_for(_stream_semaphore.acquire(), timeout=2.0)
                 sem_acquired = True
             except asyncio.TimeoutError:
-                yield _send_error(
+                yield _mark_error(
+                    state,
                     "stream_capacity_exceeded",
                     "Server is busy. Please try again.",
                     status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -649,140 +998,102 @@ async def chat_stream(
                 return
 
             yield f"data: {json.dumps({'type': 'start', 'messageId': message_id})}\n\n"
-            last_send = time.monotonic()
+            state.last_send = time.monotonic()
             yield f"data: {json.dumps({'type': 'text-start', 'id': text_id})}\n\n"
-            last_send = time.monotonic()
+            state.last_send = time.monotonic()
 
             while retry_count <= max_retries:
                 if await req.is_disconnected():
                     logging.info("Client disconnected during stream")
-                    stream_failed = True
+                    state.stream_failed = True
                     break
 
                 try:
-                    chunk_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue(maxsize=20)
-                    stop_event = threading.Event()
-                    producer_error: Exception | None = None
-
-                    def _put_nowait(msg: tuple[str, Any]) -> None:
-                        try:
-                            chunk_queue.put_nowait(msg)
-                        except queue.Full:
-                            pass
-
-                    def run_stream_in_thread() -> None:
-                        """Run synchronous ask_stream in background thread, pushing chunks to queue."""
-                        nonlocal producer_error
-                        try:
-                            for chunk in rag.ask_stream(
-                                contents=contents,
-                                system=system_prompt or None,
-                                store_names=fs_names,
-                                metadata_filter=metadata_filter,
-                                model=model,
-                            ):
-                                if stop_event.is_set():
-                                    break
-                                try:
-                                    chunk_queue.put(("chunk", chunk), timeout=0.1)
-                                except queue.Full:
-                                    producer_error = StreamBackpressureError("Stream backpressure: chunk queue full")
-                                    stop_event.set()
-                                    _put_nowait(("error", producer_error))
-                                    return
-                            _put_nowait(("done", None))
-                        except Exception as e:
-                            producer_error = e
-                            _put_nowait(("error", e))
-
-                    stream_thread = threading.Thread(target=run_stream_in_thread, daemon=True)
-                    stream_thread.start()
-
-                    try:
-                        while True:
-                            if await req.is_disconnected():
-                                logging.info("Client disconnected mid-stream")
-                                stream_failed = True
-                                stop_event.set()
+                    async with aclosing(
+                        _pump_gemini_stream(
+                            req,
+                            rag,
+                            contents=contents,
+                            system=system_prompt or None,
+                            fs_names=fs_names,
+                            metadata_filter=metadata_filter,
+                            model=model,
+                            keepalive_interval=keepalive_interval,
+                            state=state,
+                        )
+                    ) as pump:
+                        async for kind, data in pump:
+                            if kind == "disconnect":
+                                # Pump already flagged state.stream_failed and stopped the producer.
                                 break
-                            try:
-                                msg_type, data = chunk_queue.get(timeout=0.1)
-                            except queue.Empty:
-                                if not stream_thread.is_alive():
-                                    if producer_error is not None:
-                                        raise producer_error
-                                    break
-                                if await req.is_disconnected():
-                                    logging.info("Client disconnected mid-stream")
-                                    stream_failed = True
-                                    stop_event.set()
-                                    break
-                                if keepalive_interval:
-                                    now = time.monotonic()
-                                    if now - last_send >= keepalive_interval:
-                                        yield f": keepalive {int(now)}\n\n"
-                                        last_send = now
+                            if kind == "keepalive":
+                                yield f": keepalive {int(data)}\n\n"
+                                state.last_send = data
                                 continue
-
-                            if msg_type == "done":
-                                break
-                            if msg_type == "error":
-                                raise data
-                            if msg_type == "chunk":
-                                if await req.is_disconnected():
-                                    logging.info("Client disconnected mid-stream")
-                                    stream_failed = True
-                                    stop_event.set()
+                            # kind == "chunk"
+                            text_delta = getattr(data, "text", None)
+                            if text_delta:
+                                state.completion_tokens_used += _estimate_tokens_from_text(text_delta)
+                                if remaining_budget_usd is not None and _estimated_cost_exceeds(
+                                    model, prompt_tokens_used, state.completion_tokens_used, remaining_budget_usd
+                                ):
+                                    state.budget_exhausted = True
+                                    if not state.error_sent:
+                                        yield _mark_error(
+                                            state,
+                                            "budget_exceeded",
+                                            "Monthly budget exceeded",
+                                            status.HTTP_402_PAYMENT_REQUIRED,
+                                        )
+                                    state.last_send = time.monotonic()
                                     break
-                                text_delta = getattr(data, "text", None)
-                                if text_delta:
-                                    completion_tokens_used += _estimate_tokens_from_text(text_delta)
-                                    if remaining_budget_usd is not None:
-                                        estimated_cost = calc_query_cost(
-                                            model, prompt_tokens_used, completion_tokens_used
-                                        ).total_cost_usd
-                                        if estimated_cost > remaining_budget_usd:
-                                            budget_exhausted = True
-                                            stop_event.set()
-                                            if not error_sent:
-                                                yield _send_error(
-                                                    "budget_exceeded",
-                                                    "Monthly budget exceeded",
-                                                    status.HTTP_402_PAYMENT_REQUIRED,
-                                                )
-                                            last_send = time.monotonic()
-                                            break
-                                    yield (
-                                        f"data: {json.dumps({'type': 'text-delta', 'id': text_id, 'delta': text_delta})}\n\n"
-                                    )
-                                    last_send = time.monotonic()
-                                    assistant_text_parts.append(text_delta)
-                                if getattr(data, "candidates", None):
-                                    final_resp = data
-                        if budget_exhausted:
-                            break
-                    finally:
-                        stop_event.set()
-                        stream_thread.join(timeout=1.0)
-                        if stream_thread.is_alive():
-                            logging.warning("Stream thread still running after cancel")
-
+                                yield (
+                                    f"data: {json.dumps({'type': 'text-delta', 'id': text_id, 'delta': text_delta})}\n\n"
+                                )
+                                state.last_send = time.monotonic()
+                                state.has_emitted_delta = True
+                                state.assistant_text_parts.append(text_delta)
+                            if getattr(data, "candidates", None):
+                                state.final_resp = data
+                    # Attempt complete (success, disconnect, or budget stop); aclosing
+                    # guarantees the pump's thread cleanup ran before this point.
                     break
 
                 except StreamBackpressureError as exc:
                     log_json(30, "chat_stream_backpressure", user_id=user_id, model=model, error=str(exc))
-                    stream_failed = True
-                    if not error_sent:
-                        yield _send_error(
+                    state.stream_failed = True
+                    if not state.error_sent:
+                        yield _mark_error(
+                            state,
                             "stream_backpressure",
                             "Client too slow to receive stream. Please retry.",
                             status.HTTP_503_SERVICE_UNAVAILABLE,
                             retry_after_ms=250,
                         )
-                    last_send = time.monotonic()
+                    state.last_send = time.monotonic()
                     break
 
                 except RETRYABLE_EXCEPTIONS as e:
+                    if state.has_emitted_delta:
+                        log_json(
+                            30,
+                            "chat_stream_retry_suppressed_after_delta",
+                            user_id=user_id,
+                            model=model,
+                            **redact_llm_error(e),
+                        )
+                        state.stream_failed = True
+                        if not state.error_sent:
+                            yield _mark_error(
+                                state,
+                                "upstream_unavailable",
+                                "Service temporarily unavailable. Please try again.",
+                                status.HTTP_503_SERVICE_UNAVAILABLE,
+                                retry_after_ms=1000,
+                            )
+                        state.last_send = time.monotonic()
+                        break
+
                     retry_count += 1
                     retry_delay = min(8.0, 2**retry_count)
                     if retry_count > max_retries:
@@ -794,15 +1105,16 @@ async def chat_stream(
                             retries=retry_count,
                             **redact_llm_error(e),
                         )
-                        stream_failed = True
-                        if not error_sent:
-                            yield _send_error(
+                        state.stream_failed = True
+                        if not state.error_sent:
+                            yield _mark_error(
+                                state,
                                 "upstream_unavailable",
                                 "Service temporarily unavailable. Please try again.",
                                 status.HTTP_503_SERVICE_UNAVAILABLE,
                                 retry_after_ms=1000,
                             )
-                        last_send = time.monotonic()
+                        state.last_send = time.monotonic()
                         break
                     log_json(
                         30,
@@ -823,170 +1135,73 @@ async def chat_stream(
                         model=model,
                         **redact_llm_error(exc),
                     )
-                    stream_failed = True
+                    state.stream_failed = True
                     safe_error = "An error occurred processing your request. Please try again."
-                    if not error_sent:
-                        yield _send_error("unexpected_error", safe_error, status.HTTP_500_INTERNAL_SERVER_ERROR)
-                    last_send = time.monotonic()
+                    if not state.error_sent:
+                        yield _mark_error(state, "unexpected_error", safe_error, status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    state.last_send = time.monotonic()
                     break
 
-            if stream_failed:
-                error_code = last_error_code
-                if error_code is not None and error_code != "budget_exceeded":
-                    failure_tags = dict(tags or {})
-                    failure_tags["error_code"] = error_code
-                    log_db = session_factory()
-                    try:
-                        ql = QueryLog(
-                            user_id=user_id,
-                            store_id=store_ids_for_cost[0] if store_ids_for_cost else None,
-                            prompt_tokens=prompt_tokens_used,
-                            completion_tokens=completion_tokens_used,
-                            cost_usd=Decimal("0"),
-                            model=model,
-                            project_id=project_id,
-                            tags=failure_tags or None,
-                        )
-                        log_db.add(ql)
-                        log_db.commit()
-                    except Exception as e:
-                        logging.error("Failed to log failed stream cost: %s", e, exc_info=e)
-                        log_db.rollback()
-                    finally:
-                        log_db.close()
-
-            if stream_failed:
-                yield "data: [DONE]\n\n"
-                return
-
-            if budget_exhausted:
-                yield "data: [DONE]\n\n"
-                return
-
-            yield f"data: {json.dumps({'type': 'text-end', 'id': text_id})}\n\n"
-            last_send = time.monotonic()
-
-            if final_resp is not None and not budget_exhausted:
-                for c in rag.extract_citations_from_response(final_resp):
-                    payload = {
-                        "type": "source-document",
-                        "sourceId": f"cit-{c['index']}",
-                        "mediaType": "file",
-                        "title": c.get("title") or c.get("uri") or "Source",
-                        "snippet": c.get("snippet"),
-                    }
-                    yield f"data: {json.dumps(payload)}\n\n"
-                    last_send = time.monotonic()
-
-            usage = None
-            prompt_toks = prompt_tokens_used
-            completion_toks = completion_tokens_used
-            if final_resp is not None:
-                usage = getattr(final_resp, "usage_metadata", None) or getattr(
-                    getattr(final_resp, "candidates", [None])[0], "usage_metadata", None
-                )
-            if usage:
-                prompt_count = getattr(usage, "prompt_token_count", None)
-                if prompt_count is not None:
-                    try:
-                        prompt_toks = int(prompt_count)
-                    except (TypeError, ValueError):
-                        pass
-                completion_count = getattr(usage, "candidates_token_count", None)
-                if completion_count is not None:
-                    try:
-                        completion_toks = int(completion_count)
-                    except (TypeError, ValueError):
-                        pass
-            else:
-                if not completion_toks:
-                    completion_toks = _estimate_tokens_from_text("".join(assistant_text_parts))
-                log_json(
-                    30,
-                    "chat_usage_metadata_missing",
-                    user_id=user_id,
-                    model=model,
-                    prompt_tokens=prompt_toks,
-                    completion_tokens=completion_toks,
-                )
-
-            cost_result = calc_query_cost(model, prompt_toks, completion_toks)
-            if prompt_toks:
-                token_usage_total.labels(model=model, type="prompt").inc(prompt_toks)
-            if completion_toks:
-                token_usage_total.labels(model=model, type="completion").inc(completion_toks)
-
-            over_budget = False
-            log_db = session_factory()
-            try:
-                if cost_result.total_cost_usd > 0:
-                    acquire_budget_lock(log_db, user_id)
-                    over_budget = would_exceed_budget(log_db, user_id, cost_result.total_cost_usd)
-
-                ql = QueryLog(
-                    user_id=user_id,
-                    store_id=store_ids_for_cost[0] if store_ids_for_cost else None,
-                    prompt_tokens=cost_result.prompt_tokens,
-                    completion_tokens=cost_result.completion_tokens,
-                    cost_usd=cost_result.total_cost_usd,
-                    model=model,
-                    project_id=project_id,
-                    tags=tags,
-                )
-                try:
-                    log_db.add(ql)
-                    log_db.commit()
-                except Exception:
-                    logging.error(
-                        "Failed to log query cost for user %s",
-                        user_id,
-                        exc_info=True,
-                        extra={
-                            "user_id": user_id,
-                            "cost": float(cost_result.total_cost_usd),
-                            "model": model,
-                        },
-                    )
-                    log_db.rollback()
-
-                assistant_text = "".join(assistant_text_parts).strip()
-                if assistant_text:
-                    _persist_chat_message(
-                        log_db,
+            if state.stream_failed:
+                if state.last_error_code is not None and state.last_error_code != "budget_exceeded":
+                    _log_failed_stream(
+                        session_factory,
                         user_id=user_id,
-                        store_id=store_id_for_history,
-                        session_id=session_id,
-                        role="assistant",
-                        content=assistant_text,
+                        store_id=store_ids_for_cost[0] if store_ids_for_cost else None,
+                        model=model,
+                        project_id=project_id,
+                        tags=tags,
+                        error_code=state.last_error_code,
+                        prompt_tokens=prompt_tokens_used,
+                        completion_tokens=state.completion_tokens_used,
                     )
-            finally:
-                log_db.close()
+                yield "data: [DONE]\n\n"
+                return
 
-            if over_budget or budget_exhausted:
-                if not error_sent:
+            result = _finalize_and_persist(
+                session_factory,
+                user_id=user_id,
+                store_id_for_cost=store_ids_for_cost[0] if store_ids_for_cost else None,
+                store_id_for_history=store_id_for_history,
+                session_id=session_id,
+                model=model,
+                project_id=project_id,
+                tags=tags,
+                final_resp=state.final_resp,
+                prompt_tokens_est=prompt_tokens_used,
+                completion_tokens_est=state.completion_tokens_used,
+                assistant_text_parts=state.assistant_text_parts,
+            )
+
+            if result.over_budget or state.budget_exhausted:
+                if not state.error_sent:
                     log_json(
                         30,
                         "chat_budget_exceeded_post_cost",
                         user_id=user_id,
-                        cost=float(cost_result.total_cost_usd),
-                        prompt_tokens=cost_result.prompt_tokens,
-                        completion_tokens=cost_result.completion_tokens,
+                        cost=float(result.cost_result.total_cost_usd),
+                        prompt_tokens=result.cost_result.prompt_tokens,
+                        completion_tokens=result.cost_result.completion_tokens,
                     )
-                    yield _send_error("budget_exceeded", "Monthly budget exceeded", status.HTTP_402_PAYMENT_REQUIRED)
-                    last_send = time.monotonic()
+                    yield _mark_error(
+                        state, "budget_exceeded", "Monthly budget exceeded", status.HTTP_402_PAYMENT_REQUIRED
+                    )
+                    state.last_send = time.monotonic()
                 yield "data: [DONE]\n\n"
                 return
 
-            finish_payload = {
-                "type": "finish",
-                "usage": {
-                    "prompt_tokens": prompt_toks,
-                    "completion_tokens": completion_toks,
-                    "model": model,
-                },
-            }
-            yield f"data: {json.dumps(finish_payload)}\n\n"
-            last_send = time.monotonic()
+            yield f"data: {json.dumps({'type': 'text-end', 'id': text_id})}\n\n"
+            state.last_send = time.monotonic()
+
+            if state.final_resp is not None:
+                for frame in _citation_frames(rag, state.final_resp):
+                    yield frame
+                    state.last_send = time.monotonic()
+
+            yield _finish_frame(
+                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens, model=model
+            )
+            state.last_send = time.monotonic()
             yield "data: [DONE]\n\n"
             return
         finally:
