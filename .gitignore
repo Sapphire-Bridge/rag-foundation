@@ -10,6 +10,7 @@ venv/
 .env
 .env.*
 !.env.example
+!.env.demo.example
 *.db
 .mypy_cache/
 .pytest_cache/

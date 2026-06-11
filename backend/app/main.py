@@ -320,6 +320,34 @@ def create_app() -> FastAPI:
                 return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return await metrics_endpoint()
 
+    def _redis_health_ok() -> bool:
+        import logging
+        import importlib
+
+        if not settings.REDIS_URL:
+            return True
+        try:
+            redis_mod = importlib.import_module("redis")
+            client = redis_mod.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=1, socket_timeout=1)
+            return bool(client.ping())
+        except Exception as exc:
+            logging.warning("Redis health check failed: %s", exc)
+            return False
+
+    @app.get("/live")
+    def live() -> JSONResponse:
+        """Process liveness endpoint for container health checks."""
+        return JSONResponse(status_code=200, content={"status": "ok"})
+
+    @app.get("/ready")
+    def ready() -> JSONResponse:
+        """Readiness endpoint for local dependencies, excluding external LLM providers."""
+        db_ok = ping_db()
+        redis_ok = _redis_health_ok()
+        status = {"database": db_ok, "redis": redis_ok}
+        code = 200 if db_ok and redis_ok else 503
+        return JSONResponse(status_code=code, content=status)
+
     @app.get(
         "/health",
         response_model=HealthStatus,
@@ -331,7 +359,6 @@ def create_app() -> FastAPI:
     def health() -> JSONResponse:
         import logging
         from .genai import errors
-        import importlib
 
         api_error = getattr(errors, "APIError", None)
 
@@ -345,15 +372,7 @@ def create_app() -> FastAPI:
             APIError = _FallbackAPIError
 
         db_ok = ping_db()
-        redis_ok = True
-        if settings.REDIS_URL:
-            try:
-                redis_mod = importlib.import_module("redis")
-                client = redis_mod.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=1, socket_timeout=1)
-                redis_ok = bool(client.ping())
-            except Exception as exc:
-                logging.warning("Redis health check failed: %s", exc)
-                redis_ok = False
+        redis_ok = _redis_health_ok()
         # Gemini quick probe: instantiate client and attempt a lightweight call unless in mock mode.
         try:
             now_ts = time.time()
@@ -372,7 +391,12 @@ def create_app() -> FastAPI:
                             import httpx
 
                             url = "https://generativelanguage.googleapis.com/v1beta/models"
-                            resp = httpx.get(url, params={"pageSize": 1, "key": api_key}, timeout=2.0)
+                            resp = httpx.get(
+                                url,
+                                params={"pageSize": 1},
+                                headers={"x-goog-api-key": api_key},
+                                timeout=2.0,
+                            )
                             if resp.status_code >= 400:
                                 raise RuntimeError(f"Gemini probe HTTP {resp.status_code}")
                         else:

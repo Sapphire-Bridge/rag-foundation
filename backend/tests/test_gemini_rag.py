@@ -1,4 +1,9 @@
+import logging
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+import httpx
+
 from app.services.gemini_rag import GeminiRag
 from app.genai import errors
 
@@ -86,3 +91,107 @@ class TestGeminiRag:
         assert id1 != id2
         assert len(id1) == 36  # UUID format
         assert len(id2) == 36
+
+    def test_create_store_rest_fallback_sends_api_key_in_header_not_url(self, monkeypatch):
+        fake_key = "AIzaSyFakeSecretForCreateStore"
+        seen: dict[str, object] = {}
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"name": "fileSearchStores/store-123"}
+
+        def fake_post(url, **kwargs):
+            seen["url"] = url
+            seen["headers"] = kwargs.get("headers")
+            seen["json"] = kwargs.get("json")
+            return _Response()
+
+        monkeypatch.setattr("app.services.gemini_rag.httpx.post", fake_post)
+
+        rag = GeminiRag(api_key=fake_key)
+        rag.client = SimpleNamespace(
+            file_search_stores=SimpleNamespace(create=Mock(side_effect=httpx.ReadTimeout("timeout")))
+        )
+
+        result = rag.create_store("Demo Store")
+
+        assert result == "fileSearchStores/store-123"
+        assert "key=" not in str(seen["url"])
+        assert fake_key not in str(seen["url"])
+        assert seen["headers"] == {"x-goog-api-key": fake_key}
+        assert seen["json"] == {"displayName": "Demo Store"}
+
+    def test_delete_store_rest_fallback_sends_api_key_in_header_not_url(self, monkeypatch):
+        fake_key = "AIzaSyFakeSecretForDeleteStore"
+        seen: dict[str, object] = {}
+
+        class _Response:
+            status_code = 204
+
+        def fake_delete(url, **kwargs):
+            seen["url"] = url
+            seen["headers"] = kwargs.get("headers")
+            return _Response()
+
+        monkeypatch.setattr("app.services.gemini_rag.httpx.delete", fake_delete)
+
+        rag = GeminiRag(api_key=fake_key)
+        rag.client = SimpleNamespace(file_search_stores=SimpleNamespace(delete=None))
+
+        rag.delete_store("fileSearchStores/store-123")
+
+        assert str(seen["url"]).endswith("/v1beta/fileSearchStores/store-123")
+        assert "key=" not in str(seen["url"])
+        assert fake_key not in str(seen["url"])
+        assert seen["headers"] == {"x-goog-api-key": fake_key}
+
+    def test_op_status_sends_api_key_in_header_not_url(self, monkeypatch):
+        fake_key = "AIzaSyFakeSecretForRegressionTest"
+        seen: dict[str, object] = {}
+
+        class _Response:
+            content = b"{}"
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"name": "operations/op-123", "done": True}
+
+        def fake_get(url, **kwargs):
+            seen["url"] = url
+            seen["headers"] = kwargs.get("headers")
+            return _Response()
+
+        monkeypatch.setattr("app.services.gemini_rag.httpx.get", fake_get)
+
+        rag = GeminiRag(api_key=fake_key)
+        result = rag.op_status("operations/op-123")
+
+        assert result["done"] is True
+        assert "key=" not in str(seen["url"])
+        assert fake_key not in str(seen["url"])
+        assert seen["headers"] == {"x-goog-api-key": fake_key}
+
+    def test_op_status_warning_does_not_log_api_key(self, monkeypatch, caplog):
+        fake_key = "AIzaSyFakeSecretForLogRegression"
+
+        def fake_get(url, **kwargs):
+            request = httpx.Request("GET", str(url))
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("provider unavailable", request=request, response=response)
+
+        monkeypatch.setattr("app.services.gemini_rag.httpx.get", fake_get)
+
+        rag = GeminiRag(api_key=fake_key)
+        rag.client.operations.get = Mock(return_value=SimpleNamespace(name="operations/op-123", done=True, error=None))
+
+        with caplog.at_level(logging.WARNING):
+            result = rag.op_status("operations/op-123")
+
+        assert result["done"] is True
+        assert fake_key not in caplog.text
+        assert "key=" not in caplog.text

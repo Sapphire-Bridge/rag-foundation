@@ -10,9 +10,11 @@ _Built and maintained by [Felix Borck](https://sapphire-bridge.github.io) — ap
 Prereqs: Docker + Docker Compose v2.
 
 1. Clone the repo: `git clone https://github.com/Sapphire-Bridge/rag-foundation.git && cd rag-foundation`
-2. Copy env vars: `cp .env.example .env`, then either keep `GEMINI_MOCK_MODE=true` for the built-in stub or set `GEMINI_API_KEY=<your key>` and `GEMINI_MOCK_MODE=false` to call Gemini.
-3. Start the stack: `docker compose up` (add `--build` on first run).
-4. Visit http://localhost:5173 and follow the flow: Register → Login → Create store → Upload → Chat.
+2. Copy env vars: `cp .env.example .env`.
+3. Create local Docker secret files: `make secrets`.
+4. Either keep `GEMINI_MOCK_MODE=true` for the built-in stub, or write your real Gemini key to `secrets/gemini_api_key` and set `GEMINI_MOCK_MODE=false` in `.env`.
+5. Start the stack: `docker compose up` (add `--build` on first run).
+6. Visit http://localhost:5173 and follow the flow: Register → Login → Create store → Upload → Chat.
 
 > Deployers are responsible for production hardening (strong secrets, TLS/proxying, network isolation, auth); the defaults are intentionally development-friendly.
 

@@ -864,6 +864,29 @@ paths:
                 type: string
         '403':
           description: Forbidden
+  /live:
+    get:
+      summary: Live
+      description: Process liveness endpoint for container health checks.
+      operationId: live_live_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /ready:
+    get:
+      summary: Ready
+      description: Readiness endpoint for local dependencies, excluding external LLM
+        providers.
+      operationId: ready_ready_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
   /health:
     get:
       summary: Health
@@ -1127,7 +1150,7 @@ components:
           description: ID of the target store
         file:
           type: string
-          contentMediaType: application/octet-stream
+          format: binary
           title: File
           description: Document file to ingest
         displayName:
@@ -1488,11 +1511,6 @@ components:
         type:
           type: string
           title: Error Type
-        input:
-          title: Input
-        ctx:
-          type: object
-          title: Context
       type: object
       required:
       - loc

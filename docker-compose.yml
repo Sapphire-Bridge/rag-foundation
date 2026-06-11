@@ -100,6 +100,11 @@ services:
       DATABASE_URL_FILE: /run/secrets/database_url
       REDIS_URL_FILE: /run/secrets/redis_url
     command: ["arq", "app.worker.WorkerSettings"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
     volumes:
       - uploads_tmp:/tmp/rag_uploads
     secrets:
