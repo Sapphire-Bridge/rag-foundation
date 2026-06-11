@@ -13,15 +13,17 @@ class StoreCreate(BaseModel):
     @classmethod
     def sanitize_display_name(cls, v: str) -> str:
         """Sanitize display name to prevent XSS and injection attacks."""
-        # HTML escape
-        v = html.escape(v.strip())
-
-        # Check for forbidden patterns (script tags, event handlers, etc.)
+        # Check for forbidden patterns on the RAW input, BEFORE escaping — otherwise
+        # html.escape turns "<script" into "&lt;script" and the check can never match.
+        raw = v.strip()
         forbidden = ["<script", "<iframe", "javascript:", "onerror=", "onload=", "onclick=", "eval("]
-        v_lower = v.lower()
+        raw_lower = raw.lower()
         for pattern in forbidden:
-            if pattern in v_lower:
+            if pattern in raw_lower:
                 raise ValueError(f"Display name contains forbidden content: {pattern}")
+
+        # HTML escape (the actual defense; the blocklist above is defense-in-depth)
+        v = html.escape(raw)
 
         # Remove non-printable characters
         v = "".join(c for c in v if c.isprintable())
