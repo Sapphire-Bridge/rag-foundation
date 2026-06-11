@@ -46,8 +46,9 @@ def test_production_requires_redis_when_flag_enabled() -> None:
         Settings(**_base_prod_kwargs(REDIS_URL=None))
 
 
-def test_production_disallows_default_db_passwords() -> None:
-    url = "postgresql+psycopg2://rag:localdev_password_change_in_production@db:5432/rag"
+@pytest.mark.parametrize("password", ["localdev_password_change_in_production", "changeme_local_only"])
+def test_production_disallows_default_db_passwords(password: str) -> None:
+    url = f"postgresql+psycopg2://rag:{password}@db:5432/rag"
     with pytest.raises(ValueError, match="Default/blank database password"):
         Settings(**_base_prod_kwargs(DATABASE_URL=url))
 

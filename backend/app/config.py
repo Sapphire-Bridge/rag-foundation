@@ -19,6 +19,7 @@ from app.file_types import (
 
 DEV_DEFAULT_JWT_SECRET = "dev_secret_DO_NOT_USE_IN_PRODUCTION_generate_real_secret_with_secrets_module"
 DEFAULT_DB_PASSWORDS = {
+    "changeme_local_only",
     "localdev_password_change_in_production",
     "postgres",
     "password",

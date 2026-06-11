@@ -22,6 +22,16 @@ def test_ready_endpoint_reports_local_dependencies(client, monkeypatch):
     assert response.json() == {"database": True, "redis": True}
 
 
+def test_ready_endpoint_returns_503_when_database_unavailable(client, monkeypatch):
+    monkeypatch.setattr(settings, "REDIS_URL", None)
+    monkeypatch.setattr(main_module, "ping_db", lambda: False)
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {"database": False, "redis": True}
+
+
 def test_health_gemini_probe_sends_api_key_in_header_not_url(client, monkeypatch):
     fake_key = "AIzaSyFakeSecretForHealthProbe"
     seen: dict[str, object] = {}
