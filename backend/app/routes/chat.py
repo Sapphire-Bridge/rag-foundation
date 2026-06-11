@@ -2,8 +2,6 @@
 
 import asyncio
 import datetime
-import hashlib
-import hmac
 import json
 import logging
 import queue
@@ -58,11 +56,6 @@ ALLOWED_MODELS = {
     "gemini-1.5-flash",
 }
 _SAFE_METADATA_VALUE_TYPES = (str, int, float, bool)
-
-
-def _audit_actor_ref(user_id: int) -> str:
-    digest = hmac.new(settings.JWT_SECRET.encode("utf-8"), str(user_id).encode("utf-8"), hashlib.sha256).hexdigest()
-    return f"actor:{digest[:12]}"
 
 
 class StreamBackpressureError(RuntimeError):
@@ -648,10 +641,9 @@ def _log_failed_stream(
         logging.error(
             "Failed to log failed stream cost",
             extra={
-                "actor_ref": _audit_actor_ref(user_id),
+                "user_id": "[REDACTED]",
+                "failure_site": "failed_stream_cost",
                 "error_type": type(e).__name__,
-                "error_code": error_code,
-                "model": model,
             },
         )
         log_db.rollback()
@@ -770,10 +762,9 @@ def _finalize_and_persist(
             logging.error(
                 "Failed to log query cost",
                 extra={
-                    "actor_ref": _audit_actor_ref(user_id),
+                    "user_id": "[REDACTED]",
+                    "failure_site": "query_cost",
                     "error_type": type(e).__name__,
-                    "cost": float(cost_result.total_cost_usd),
-                    "model": model,
                 },
             )
             log_db.rollback()

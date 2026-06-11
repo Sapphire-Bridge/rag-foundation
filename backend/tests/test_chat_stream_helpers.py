@@ -271,16 +271,14 @@ def test_log_failed_stream_cost_log_uses_safe_structured_fields(monkeypatch):
     kwargs = captured["kwargs"]
     assert "exc_info" not in kwargs
     assert kwargs["extra"] == {
-        "actor_ref": chat_routes._audit_actor_ref(123),
+        "user_id": "[REDACTED]",
+        "failure_site": "failed_stream_cost",
         "error_type": "RuntimeError",
-        "error_code": "upstream_unavailable",
-        "model": "gemini-2.0-flash",
     }
-    assert "user_id" not in kwargs["extra"]
-    assert "123" not in kwargs["extra"]["actor_ref"]
+    assert "123" not in str(kwargs["extra"])
 
 
-def test_finalize_and_persist_cost_log_uses_actor_ref_not_raw_user_id(monkeypatch):
+def test_finalize_and_persist_cost_log_uses_safe_structured_fields(monkeypatch):
     captured: dict[str, object] = {}
 
     class FailingSession:
@@ -323,10 +321,8 @@ def test_finalize_and_persist_cost_log_uses_actor_ref_not_raw_user_id(monkeypatc
     kwargs = captured["kwargs"]
     assert "exc_info" not in kwargs
     assert kwargs["extra"] == {
-        "actor_ref": chat_routes._audit_actor_ref(123),
+        "user_id": "[REDACTED]",
+        "failure_site": "query_cost",
         "error_type": "RuntimeError",
-        "cost": 0.0,
-        "model": "gemini-2.5-flash",
     }
-    assert "user_id" not in kwargs["extra"]
-    assert "123" not in kwargs["extra"]["actor_ref"]
+    assert "123" not in str(kwargs["extra"])
