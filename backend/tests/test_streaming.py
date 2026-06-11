@@ -1,5 +1,6 @@
 import asyncio
 import time
+from decimal import Decimal
 
 from fastapi import Depends, Request
 from fastapi.testclient import TestClient
@@ -174,6 +175,8 @@ class TestChatStreamingResilience:
                     assert "Hello" in content
                     assert "world" in content
                     assert '"type": "finish"' in content
+                    assert '"promptTokens": 0' in content
+                    assert '"completionTokens": 0' in content
                     assert "[DONE]" in content
         finally:
             chat_routes.get_current_user = orig_get_current_user
@@ -236,6 +239,153 @@ class TestChatStreamingResilience:
                     assert '"retryAfterMs": 1000' in content
                     assert "Service temporarily unavailable" in content
                     assert "[DONE]" in content
+        finally:
+            chat_routes.get_current_user = orig_get_current_user
+            app.dependency_overrides.pop(real_get_authorization, None)
+            app.dependency_overrides.pop(real_get_current_user, None)
+            app.dependency_overrides.pop(real_get_db, None)
+            app.dependency_overrides.pop(real_get_session_factory, None)
+
+    def test_chat_streaming_does_not_retry_after_partial_delta(self):
+        """Once text is emitted, retryable upstream failures must terminate the stream."""
+        client = TestClient(app)
+        mock_user = _make_user(1)
+        app.dependency_overrides[real_get_authorization] = lambda: "test-token"
+        app.dependency_overrides[real_get_current_user] = lambda: mock_user
+        orig_get_current_user = chat_routes.get_current_user
+
+        def _ov_get_current_user(
+            db: Session = Depends(real_get_db),
+            token: str = Depends(real_get_authorization),
+        ) -> User:
+            return mock_user
+
+        chat_routes.get_current_user = _ov_get_current_user
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.one_or_none.return_value = None
+
+        def _ov_db():
+            yield mock_db
+
+        def _ov_session_factory(request: Request):
+            return lambda: mock_db
+
+        app.dependency_overrides[real_get_db] = _ov_db
+        app.dependency_overrides[real_get_session_factory] = _ov_session_factory
+        try:
+            mock_store = Mock(id=1, fs_name="test-store", user_id=1)
+            mock_db.query.return_value.filter.return_value.all.return_value = [mock_store]
+
+            with (
+                patch("app.routes.chat.user_budget", return_value=None),
+                patch("app.routes.chat.mtd_spend", return_value=0),
+            ):
+                with patch("app.routes.chat.get_rag_client") as mock_rag_client:
+                    mock_rag = MagicMock()
+                    mock_rag_client.return_value = mock_rag
+                    mock_rag.new_stream_ids.return_value = ("msg-123", "text-456")
+
+                    def ask_stream_side_effect(*args, **kwargs):
+                        def gen():
+                            yield Mock(text="partial", candidates=None)
+                            raise TimeoutError("provider timed out after partial output")
+
+                        return gen()
+
+                    mock_rag.ask_stream.side_effect = ask_stream_side_effect
+
+                    response = client.post(
+                        "/api/chat",
+                        json={"question": "Test question", "storeIds": [1], "model": "gemini-2.5-flash"},
+                        headers={"X-Requested-With": "XMLHttpRequest", "Authorization": "Bearer test"},
+                    )
+
+                    assert response.status_code == 200
+                    content = response.content.decode()
+                    assert "partial" in content
+                    assert '"type": "error"' in content
+                    assert '"code": "upstream_unavailable"' in content
+                    assert '"type": "finish"' not in content
+                    assert mock_rag.ask_stream.call_count == 1
+        finally:
+            chat_routes.get_current_user = orig_get_current_user
+            app.dependency_overrides.pop(real_get_authorization, None)
+            app.dependency_overrides.pop(real_get_current_user, None)
+            app.dependency_overrides.pop(real_get_db, None)
+            app.dependency_overrides.pop(real_get_session_factory, None)
+
+    def test_chat_streaming_finalizes_after_midstream_budget_exhaustion(self, monkeypatch):
+        """Mid-stream budget stops should still run final accounting and persistence."""
+        client = TestClient(app)
+        mock_user = _make_user(1)
+        app.dependency_overrides[real_get_authorization] = lambda: "test-token"
+        app.dependency_overrides[real_get_current_user] = lambda: mock_user
+        orig_get_current_user = chat_routes.get_current_user
+
+        def _ov_get_current_user(
+            db: Session = Depends(real_get_db),
+            token: str = Depends(real_get_authorization),
+        ) -> User:
+            return mock_user
+
+        chat_routes.get_current_user = _ov_get_current_user
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.one_or_none.return_value = None
+
+        def _ov_db():
+            yield mock_db
+
+        def _ov_session_factory(request: Request):
+            return lambda: mock_db
+
+        app.dependency_overrides[real_get_db] = _ov_db
+        app.dependency_overrides[real_get_session_factory] = _ov_session_factory
+        try:
+            monkeypatch.setattr(settings, "BUDGET_HOLD_USD", 0.0)
+            mock_store = Mock(id=1, fs_name="test-store", user_id=1)
+            mock_db.query.return_value.filter.return_value.all.return_value = [mock_store]
+
+            with (
+                patch("app.routes.chat.user_budget", return_value=Decimal("0.001")),
+                patch("app.routes.chat.mtd_spend", return_value=Decimal("0")),
+                patch("app.routes.chat.get_rag_client") as mock_rag_client,
+                patch("app.routes.chat._finalize_and_persist") as mock_finalize,
+            ):
+                mock_rag = MagicMock()
+                mock_rag_client.return_value = mock_rag
+                mock_rag.new_stream_ids.return_value = ("msg-123", "text-456")
+                mock_finalize.return_value = chat_routes._FinalizeResult(
+                    prompt_tokens=1,
+                    completion_tokens=2501,
+                    cost_result=chat_routes.calc_query_cost("gemini-2.5-flash", 1, 2501),
+                    over_budget=True,
+                )
+
+                def ask_stream_side_effect(*args, **kwargs):
+                    def gen():
+                        yield Mock(text="ok", candidates=None)
+                        yield Mock(text="x" * 10000, candidates=None)
+
+                    return gen()
+
+                mock_rag.ask_stream.side_effect = ask_stream_side_effect
+
+                response = client.post(
+                    "/api/chat",
+                    json={"question": "Test question", "storeIds": [1], "model": "gemini-2.5-flash"},
+                    headers={"X-Requested-With": "XMLHttpRequest", "Authorization": "Bearer test"},
+                )
+
+                assert response.status_code == 200
+                content = response.content.decode()
+                assert "ok" in content
+                assert '"type": "error"' in content
+                assert '"code": "budget_exceeded"' in content
+                assert '"type": "finish"' not in content
+                assert "[DONE]" in content
+                mock_finalize.assert_called_once()
+                assert mock_finalize.call_args.kwargs["completion_tokens_est"] > 0
+                assert mock_finalize.call_args.kwargs["assistant_text_parts"] == ["ok"]
         finally:
             chat_routes.get_current_user = orig_get_current_user
             app.dependency_overrides.pop(real_get_authorization, None)
