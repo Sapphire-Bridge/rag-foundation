@@ -42,7 +42,11 @@ clean:
 secrets:
 	@mkdir -p secrets
 	@test -f secrets/jwt_secret || openssl rand -hex 32 > secrets/jwt_secret
-	@echo "Secrets generated under ./secrets (fill GEMINI_API_KEY, DB/Redis URLs as needed)"
+	@test -f secrets/gemini_api_key || : > secrets/gemini_api_key
+	@test -f secrets/database_url || printf '%s' 'postgresql+psycopg2://rag:changeme_local_only@db:5432/rag' > secrets/database_url
+	@test -f secrets/redis_url || printf '%s' 'redis://redis:6379/0' > secrets/redis_url
+	@test -f secrets/postgres_password || printf '%s' 'changeme_local_only' > secrets/postgres_password
+	@echo "Secrets generated under ./secrets (write a real Gemini key to secrets/gemini_api_key when GEMINI_MOCK_MODE=false)"
 
 demo:
 	docker-compose -f docker-compose.demo.yml up --build

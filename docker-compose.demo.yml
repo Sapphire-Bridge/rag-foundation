@@ -76,6 +76,11 @@ services:
       redis:
         condition: service_healthy
     command: ["arq", "app.worker.WorkerSettings"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
     networks:
       - rag-network
 

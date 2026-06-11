@@ -126,7 +126,7 @@ services:
       - app
       - data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health').read()"]
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/live').read()"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -170,6 +170,11 @@ services:
       - postgres_password
       - redis_url
       - gemini_api_key
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
     networks:
       - data
 

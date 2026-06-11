@@ -48,6 +48,13 @@ const parseList = (value: unknown): string[] => {
   return [];
 };
 
+const firstNonEmptyList = (...values: string[][]): string[] => {
+  for (const value of values) {
+    if (value.length > 0) return value;
+  }
+  return DEFAULT_ALLOWED_MIMES;
+};
+
 export function getUploadLimits(): UploadLimits {
   const runtimeLimits =
     typeof window !== "undefined" ? (window as unknown as { __UPLOAD_LIMITS__?: UploadLimits }).__UPLOAD_LIMITS__ : null;
@@ -57,10 +64,10 @@ export function getUploadLimits(): UploadLimits {
     parseNumber(import.meta.env.VITE_MAX_UPLOAD_MB) ??
     DEFAULT_MAX_UPLOAD_MB;
 
-  const allowedMimes =
-    parseList(runtimeLimits?.allowedMimes) ||
-    parseList(import.meta.env.VITE_ALLOWED_UPLOAD_MIMES || import.meta.env.VITE_ALLOWED_UPLOAD_TYPES) ||
-    DEFAULT_ALLOWED_MIMES;
+  const allowedMimes = firstNonEmptyList(
+    parseList(runtimeLimits?.allowedMimes),
+    parseList(import.meta.env.VITE_ALLOWED_UPLOAD_MIMES || import.meta.env.VITE_ALLOWED_UPLOAD_TYPES),
+  );
 
   return { maxUploadMb, allowedMimes };
 }

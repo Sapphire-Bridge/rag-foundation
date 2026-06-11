@@ -33,6 +33,16 @@ class UploadResult:
     file_id: str | None = None
 
 
+def _gemini_api_key_headers(api_key: str | None) -> dict[str, str]:
+    return {"x-goog-api-key": api_key} if api_key else {}
+
+
+def _http_status_code(exc: BaseException) -> int | None:
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    return status_code if isinstance(status_code, int) else None
+
+
 def _is_rate_limit_error(exc: BaseException | None) -> bool:
     if isinstance(exc, errors.APIError) and getattr(exc, "code", None) == 429:
         return True
@@ -275,8 +285,13 @@ class GeminiRag:
 
             if isinstance(e, (ReadTimeout, TimeoutException, TimeoutError)) and self._api_key:
                 try:
-                    url = f"https://generativelanguage.googleapis.com/v1beta/fileSearchStores?key={self._api_key}"
-                    resp = httpx.post(url, json={"displayName": display_name}, timeout=settings.GEMINI_HTTP_TIMEOUT_S)
+                    url = "https://generativelanguage.googleapis.com/v1beta/fileSearchStores"
+                    resp = httpx.post(
+                        url,
+                        headers=_gemini_api_key_headers(self._api_key),
+                        json={"displayName": display_name},
+                        timeout=settings.GEMINI_HTTP_TIMEOUT_S,
+                    )
                     resp.raise_for_status()
                     data = resp.json()
                     name = data.get("name")
@@ -355,9 +370,13 @@ class GeminiRag:
 
         # Fallback to REST delete if SDK delete is missing (seen in constrained envs)
         if self._api_key:
-            url = f"https://generativelanguage.googleapis.com/v1beta/{store_name}?key={self._api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/{store_name}"
             try:
-                resp = httpx.delete(url, timeout=settings.GEMINI_HTTP_TIMEOUT_S)
+                resp = httpx.delete(
+                    url,
+                    headers=_gemini_api_key_headers(self._api_key),
+                    timeout=settings.GEMINI_HTTP_TIMEOUT_S,
+                )
                 if resp.status_code not in (200, 204, 404):
                     logging.warning(
                         "Gemini REST delete returned unexpected status",
@@ -409,16 +428,24 @@ class GeminiRag:
 
         # Prefer REST when we have an API key; SDK expects an operation object, not a raw string.
         if self._api_key:
-            url = f"https://generativelanguage.googleapis.com/v1beta/{op_name_str}?key={self._api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/{op_name_str}"
             try:
-                resp = httpx.get(url, timeout=settings.GEMINI_HTTP_TIMEOUT_S)
+                resp = httpx.get(
+                    url,
+                    headers=_gemini_api_key_headers(self._api_key),
+                    timeout=settings.GEMINI_HTTP_TIMEOUT_S,
+                )
                 resp.raise_for_status()
                 data = resp.json() if resp.content else {}
                 return _normalize_operation_result(data, name=op_name_str, context="operation status response")
             except httpx.HTTPError as exc:
                 logger.warning(
                     "REST op_status failed, falling back to SDK",
-                    extra={"op_name": op_name_str, "error": str(exc)},
+                    extra={
+                        "op_name": op_name_str,
+                        "error_type": type(exc).__name__,
+                        "status_code": _http_status_code(exc),
+                    },
                 )
 
         try:

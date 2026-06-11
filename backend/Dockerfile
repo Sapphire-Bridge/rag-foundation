@@ -37,6 +37,6 @@ RUN chmod +x /app/entrypoint.sh
 
 USER appuser
 EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=3s --retries=3 CMD curl -fsS http://localhost:8000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 CMD curl -fsS http://localhost:8000/live || exit 1
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["gunicorn", "app.main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
