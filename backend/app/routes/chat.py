@@ -622,9 +622,14 @@ def _log_failed_stream(
     prompt_tokens: int,
     completion_tokens: int,
 ) -> None:
-    """Record a zero-cost QueryLog row for a failed stream."""
+    """Record cost metadata for a failed stream."""
     failure_tags = dict(tags or {})
     failure_tags["error_code"] = error_code
+    cost_usd = (
+        calc_query_cost(model, prompt_tokens, completion_tokens).total_cost_usd
+        if completion_tokens > 0
+        else Decimal("0")
+    )
     log_db = session_factory()
     try:
         ql = QueryLog(
@@ -632,7 +637,7 @@ def _log_failed_stream(
             store_id=store_id,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            cost_usd=Decimal("0"),
+            cost_usd=cost_usd,
             model=model,
             project_id=project_id,
             tags=failure_tags or None,
@@ -640,7 +645,15 @@ def _log_failed_stream(
         log_db.add(ql)
         log_db.commit()
     except Exception as e:
-        logging.error("Failed to log failed stream cost: %s", e, exc_info=e)
+        logging.error(
+            "Failed to log failed stream cost",
+            extra={
+                "actor_ref": _audit_actor_ref(user_id),
+                "error_type": type(e).__name__,
+                "error_code": error_code,
+                "model": model,
+            },
+        )
         log_db.rollback()
     finally:
         log_db.close()

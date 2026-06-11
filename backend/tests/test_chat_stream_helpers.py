@@ -162,6 +162,124 @@ def test_finalize_and_persist_records_query_and_assistant_message(session_factor
     assert message.content == "assistant reply"
 
 
+def test_log_failed_stream_records_partial_output_cost(session_factory, db_session):
+    user = User(
+        id=456,
+        email="failed-stream@example.com",
+        hashed_password="",
+        is_active=True,
+        email_verified=True,
+        is_admin=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    chat_routes._log_failed_stream(
+        session_factory,
+        user_id=user.id,
+        store_id=None,
+        model="gemini-2.0-flash",
+        project_id=77,
+        tags={"suite": "stream-helper"},
+        error_code="upstream_unavailable",
+        prompt_tokens=200,
+        completion_tokens=50,
+    )
+
+    db_session.expire_all()
+    query_log = db_session.query(QueryLog).filter(QueryLog.user_id == user.id).one()
+    expected = chat_routes.calc_query_cost("gemini-2.0-flash", 200, 50)
+
+    assert query_log.prompt_tokens == 200
+    assert query_log.completion_tokens == 50
+    assert query_log.cost_usd == expected.total_cost_usd
+    assert query_log.cost_usd > Decimal("0")
+    assert query_log.project_id == 77
+    assert query_log.tags == {"suite": "stream-helper", "error_code": "upstream_unavailable"}
+
+
+def test_log_failed_stream_before_first_delta_remains_zero_cost(session_factory, db_session):
+    user = User(
+        id=457,
+        email="failed-before-delta@example.com",
+        hashed_password="",
+        is_active=True,
+        email_verified=True,
+        is_admin=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    chat_routes._log_failed_stream(
+        session_factory,
+        user_id=user.id,
+        store_id=None,
+        model="gemini-2.0-flash",
+        project_id=None,
+        tags=None,
+        error_code="upstream_unavailable",
+        prompt_tokens=200,
+        completion_tokens=0,
+    )
+
+    db_session.expire_all()
+    query_log = db_session.query(QueryLog).filter(QueryLog.user_id == user.id).one()
+
+    assert query_log.prompt_tokens == 200
+    assert query_log.completion_tokens == 0
+    assert query_log.cost_usd == Decimal("0")
+    assert query_log.tags == {"error_code": "upstream_unavailable"}
+
+
+def test_log_failed_stream_cost_log_uses_safe_structured_fields(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FailingSession:
+        def add(self, _obj):
+            return None
+
+        def commit(self):
+            raise RuntimeError("raw user_id=123 should not be logged")
+
+        def rollback(self):
+            captured["rolled_back"] = True
+
+        def close(self):
+            captured["closed"] = True
+
+    def fake_error(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(chat_routes.logging, "error", fake_error)
+
+    chat_routes._log_failed_stream(
+        lambda: FailingSession(),
+        user_id=123,
+        store_id=None,
+        model="gemini-2.0-flash",
+        project_id=None,
+        tags=None,
+        error_code="upstream_unavailable",
+        prompt_tokens=200,
+        completion_tokens=50,
+    )
+
+    assert captured["rolled_back"] is True
+    assert captured["closed"] is True
+    assert captured["args"] == ("Failed to log failed stream cost",)
+    kwargs = captured["kwargs"]
+    assert "exc_info" not in kwargs
+    assert kwargs["extra"] == {
+        "actor_ref": chat_routes._audit_actor_ref(123),
+        "error_type": "RuntimeError",
+        "error_code": "upstream_unavailable",
+        "model": "gemini-2.0-flash",
+    }
+    assert "user_id" not in kwargs["extra"]
+    assert "123" not in kwargs["extra"]["actor_ref"]
+
+
 def test_finalize_and_persist_cost_log_uses_actor_ref_not_raw_user_id(monkeypatch):
     captured: dict[str, object] = {}
 
