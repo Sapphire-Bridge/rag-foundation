@@ -160,3 +160,54 @@ def test_finalize_and_persist_records_query_and_assistant_message(session_factor
     assert query_log.tags == {"suite": "stream-helper"}
     assert message.role == "assistant"
     assert message.content == "assistant reply"
+
+
+def test_finalize_and_persist_cost_log_uses_actor_ref_not_raw_user_id(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FailingSession:
+        def add(self, _obj):
+            return None
+
+        def commit(self):
+            raise RuntimeError("commit failed")
+
+        def rollback(self):
+            captured["rolled_back"] = True
+
+        def close(self):
+            captured["closed"] = True
+
+    def fake_error(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(chat_routes.logging, "error", fake_error)
+
+    chat_routes._finalize_and_persist(
+        lambda: FailingSession(),
+        user_id=123,
+        store_id_for_cost=None,
+        store_id_for_history=None,
+        session_id="helper-session",
+        model="gemini-2.5-flash",
+        project_id=None,
+        tags=None,
+        final_resp=SimpleNamespace(usage_metadata=SimpleNamespace(prompt_token_count=0, candidates_token_count=0)),
+        prompt_tokens_est=0,
+        completion_tokens_est=0,
+        assistant_text_parts=[],
+    )
+
+    assert captured["rolled_back"] is True
+    assert captured["closed"] is True
+    assert captured["args"] == ("Failed to log query cost",)
+    kwargs = captured["kwargs"]
+    assert kwargs["exc_info"] is True
+    assert kwargs["extra"] == {
+        "actor_ref": chat_routes._audit_actor_ref(123),
+        "cost": 0.0,
+        "model": "gemini-2.5-flash",
+    }
+    assert "user_id" not in kwargs["extra"]
+    assert "123" not in kwargs["extra"]["actor_ref"]
