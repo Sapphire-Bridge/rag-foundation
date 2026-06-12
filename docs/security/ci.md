@@ -6,7 +6,7 @@ This project uses a layered security approach to keep the pipeline fast while ca
 
 | Trigger | Workflow / Command | Tools run | Goal |
 | :--- | :--- | :--- | :--- |
-| Local dev | `scripts/security-scan.sh` | pip-audit, npm audit, Gitleaks (if installed) | Catch issues before pushing. |
+| Local dev | `scripts/security-scan.sh` | Bandit, pip-audit, npm audit, Gitleaks (if installed) | Catch issues before pushing. |
 | Pull request | `Security CI` | Base (all repos): Gitleaks, Semgrep, Trivy<br>Public only: + CodeQL, Dependency Review | Block secrets and obvious bugs from entering main. |
 | Nightly | `Security CI` | Base (all repos): Gitleaks, Semgrep, Trivy<br>Public only: + CodeQL | Detect new CVEs in existing dependencies. |
 | Release/tag | `ci-strict` + `Security CI` | All of the above + manual checks (as needed) | Final gate before production. |
@@ -18,6 +18,7 @@ Private forks skip the Advanced (CodeQL + Dependency Review) jobs automatically 
 | Tool | Purpose | Scope |
 | :--- | :--- | :--- |
 | Gitleaks | Secret scanning | Git history and working tree |
+| Bandit | Python security lint | Medium/high severity backend findings |
 | Semgrep | SAST (code analysis) | Python, TypeScript/React |
 | Trivy | Dependency scan (SCA) | `requirements.lock`, `package-lock.json` |
 | CodeQL (public only) | Deep data-flow SAST | Python, JavaScript/TypeScript |
@@ -32,14 +33,19 @@ Run the pre-push security scan:
 ```
 
 If Gitleaks is not installed locally, the script skips it and reports the skip.
+If Bandit is not installed locally, install the pinned version with
+`pip install bandit==1.9.1` or rely on `ci-strict`.
+
+Bandit triage policy lives in [`bandit-triage.md`](bandit-triage.md).
 
 ## Ignored Vulnerabilities
 
-Some vulnerabilities are intentionally ignored when no patch is available:
+No `pip-audit` vulnerabilities are ignored in local or CI commands. The frontend
+audit uses `npm audit --production --audit-level=high`; dev-only risk is tracked
+separately when it does not ship in the production bundle.
 
 | ID | Package | Reason | Review Frequency |
 |----|---------|--------|------------------|
-| GHSA-wj6h-64fc-37mp | ecdsa 0.19.1 | No patch available | Weekly |
 | GHSA-67mh-4wv8-2f99 | esbuild ≤0.24.2 | Dev-only, breaking change | Monthly |
 
 See [`known-risks.md`](known-risks.md) for full risk assessments and monitoring plans.
@@ -59,14 +65,8 @@ When a patch becomes available:
 On the first Monday of each month:
 
 ```bash
-# Check for ecdsa updates
-pip index versions ecdsa
-
-# If new version exists:
 cd backend
-pip install --upgrade ecdsa
-pip freeze > requirements.lock
-pip-audit -r requirements.lock  # Should pass now
-
-# Update documentation to remove the ignore
+pip-audit -r requirements.lock --strict
+cd ../frontend
+npm audit --production --audit-level=high
 ```

@@ -27,7 +27,7 @@ jobs:
           python -m pip install --upgrade pip
           cd backend
           pip install -r requirements.lock
-          pip install pytest httpx pytest-asyncio pytest-cov pip-audit bandit
+          pip install pytest httpx pytest-asyncio pytest-cov pip-audit bandit==1.9.1
           alembic upgrade head
 
       - name: Backend full suite
@@ -37,14 +37,12 @@ jobs:
       - name: pip-audit (backend)
         run: |
           cd backend
-          # python-ecdsa Minerva timing attack (CVE-2024-23342 / GHSA-wj6h-64fc-37mp)
-          # Safe to ignore here: this service uses HS256 JWT (no ECDSA signing); ecdsa is only transitive.
-          pip-audit -r requirements.lock --strict --ignore-vuln CVE-2024-23342 --ignore-vuln GHSA-wj6h-64fc-37mp --ignore-vuln CVE-2026-21441
+          pip-audit -r requirements.lock --strict
 
       - name: Bandit (backend)
         run: |
           cd backend
-          bandit -r app -x tests
+          bandit -c pyproject.toml -r app -ll
 
       - name: Build backend image
         run: |

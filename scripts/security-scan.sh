@@ -5,6 +5,7 @@ set -euo pipefail
 VERBOSE=${VERBOSE:-0}
 SKIP_GITLEAKS=${SKIP_GITLEAKS:-0}
 SKIP_SEMGREP=${SKIP_SEMGREP:-0}
+SKIP_BANDIT=${SKIP_BANDIT:-0}
 SKIP_PIP_AUDIT=${SKIP_PIP_AUDIT:-0}
 SKIP_NPM_AUDIT=${SKIP_NPM_AUDIT:-0}
 
@@ -70,7 +71,30 @@ fi
 echo ""
 
 # =============================================================================
-# 3. pip-audit (Python Dependencies)
+# 3. Bandit (Python SAST)
+# =============================================================================
+if [ "$SKIP_BANDIT" = "1" ]; then
+    echo "⏭️  Skipping Bandit (SKIP_BANDIT=1)"
+elif [ -d "backend" ]; then
+    if command -v bandit &> /dev/null; then
+        echo "🐍 Running Bandit (Python security lint)..."
+        if ! (cd backend && bandit -c pyproject.toml -r app -ll); then
+            echo "❌ Bandit found medium/high severity issues"
+            SCAN_FAILED=1
+        else
+            echo "✅ No medium/high Bandit findings"
+        fi
+    else
+        echo "⚠️  Bandit not installed. Install: pip install bandit==1.9.1"
+        echo "    Skipping Python security lint..."
+    fi
+else
+    echo "⏭️  No backend/ directory found"
+fi
+echo ""
+
+# =============================================================================
+# 4. pip-audit (Python Dependencies)
 # =============================================================================
 if [ "$SKIP_PIP_AUDIT" = "1" ]; then
     echo "⏭️  Skipping pip-audit (SKIP_PIP_AUDIT=1)"
@@ -80,10 +104,7 @@ elif [ -d "backend" ]; then
         SCAN_FAILED=1
     else
         echo "🐍 Running pip-audit (Python dependencies)..."
-        # Ignored vulnerabilities (see docs/security/known-risks.md for justification):
-        # - GHSA-wj6h-64fc-37mp: ecdsa 0.19.1 Minerva attack (no patch available as of 2024-11-25)
-        if ! (cd backend && pip-audit -r requirements.lock \
-            --ignore-vuln GHSA-wj6h-64fc-37mp); then
+        if ! (cd backend && pip-audit -r requirements.lock --strict); then
             echo "❌ pip-audit found vulnerabilities"
             SCAN_FAILED=1
         else
@@ -96,7 +117,7 @@ fi
 echo ""
 
 # =============================================================================
-# 4. npm audit (Node Dependencies)
+# 5. npm audit (Node Dependencies)
 # =============================================================================
 if [ "$SKIP_NPM_AUDIT" = "1" ]; then
     echo "⏭️  Skipping npm audit (SKIP_NPM_AUDIT=1)"
@@ -106,8 +127,8 @@ elif [ -d "frontend" ]; then
         SCAN_FAILED=1
     else
         echo "📦 Running npm audit (Node dependencies)..."
-        # Use high level; moderate findings are handled by Trivy in CI
-        if ! (cd frontend && npm audit --audit-level=high); then
+        # Use production dependencies at high level; moderate/dev findings are handled by Trivy/lockfile review in CI.
+        if ! (cd frontend && npm audit --production --audit-level=high); then
             echo "❌ npm audit found vulnerabilities"
             SCAN_FAILED=1
         else

@@ -1,20 +1,94 @@
 # RAG Assistant
+
 [![CI Basic](https://github.com/Sapphire-Bridge/rag-foundation/actions/workflows/ci-basic.yml/badge.svg)](https://github.com/Sapphire-Bridge/rag-foundation/actions/workflows/ci-basic.yml)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](backend/pyproject.toml)
+[![Node 20](https://img.shields.io/badge/node-20-green.svg)](frontend/package.json)
 
-A production-minded RAG (Retrieval-Augmented Generation) reference for authenticated, multi-tenant document Q&A: streaming answers with **source citations**, per-user **cost budgets**, JWT auth with tenant isolation, rate limiting, audit trails, and first-class observability.
+Authenticated RAG reference app for document Q&A with streaming answers, source citations, cost tracking, tenant isolation, and reproducible mock-mode review.
 
-_Built and maintained by [Felix Borck](https://sapphire-bridge.github.io) — applied-AI engineer focused on retrieval, provenance, and deploying LLMs in regulated, audited environments._
+_Built and maintained by [Felix Borck](https://sapphire-bridge.github.io), focused on applied-AI/backend systems where retrieval, provenance, cost control, and operational safety matter._
 
-## 🚀 Quickstart (Docker)
+## Portfolio Demo
+
+The default reviewer path uses deterministic mock mode. It exercises the product flow without a Gemini key, billing account, model quota, or outbound LLM latency.
+
+![Mock demo chat with indexed upload, citation control, and cost tracking](docs/assets/demo/mock-demo-chat.png)
+
+![Mock demo citation panel showing the source document snippet](docs/assets/demo/mock-demo-citations.png)
+
+## Reviewer Quick Path
+
+Prereqs: Docker + Docker Compose v2.
+
+```bash
+git clone https://github.com/Sapphire-Bridge/rag-foundation.git
+cd rag-foundation
+make demo
+```
+
+Open http://localhost:8080 and complete:
+
+1. Register/Login
+2. Create a store
+3. Upload `docs/demo/sample-report.md`
+4. Ask: `What does this demo prove about the RAG engineering flow?`
+5. Check the streamed answer, citation control, and cost panel
+
+Teardown:
+
+```bash
+make demo-down
+```
+
+If an old local Docker volume has stale credentials, run `make demo-reset` once. The demo is still mock mode and still requires no external SaaS credentials.
+
+## What This Demonstrates
+
+- Document upload and ingestion through API, worker, PostgreSQL, Redis, and persistent upload volume.
+- RAG answer flow with streaming SSE, source-document citation events, and deterministic mock responses for repeatable review.
+- Authenticated, tenant-scoped store boundaries with JWT login/register and per-user document stores.
+- Cost visibility for indexing/query activity, including a reviewer-visible cost panel.
+- Backend engineering hygiene: FastAPI, SQLAlchemy/Alembic, typed config validation, health checks, rate limiting, structured errors, tests, linting, type checks, dependency audits, and security scans.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  UI["React frontend"] --> API["FastAPI API"]
+  API --> Auth["JWT auth and store tenancy"]
+  API --> Upload["Upload validation"]
+  Upload --> Worker["ARQ ingestion worker"]
+  Worker --> Index["Gemini file/index layer or mock RAG"]
+  API --> Chat["SSE chat route"]
+  Chat --> RAG["Retriever + LLM adapter"]
+  RAG --> Answer["Answer, source citations, cost events"]
+  API --> DB["PostgreSQL"]
+  API --> Redis["Redis queue/rate limits"]
+```
+
+## Known Limitations
+
+- Demo mode uses deterministic mock responses so reviewers can validate the flow without external API keys.
+- Production deployment is documented as a checklist, but this repository's primary signal is applied-AI/backend engineering rather than turnkey managed hosting.
+- The UI is intentionally compact; this repo prioritizes backend, RAG flow, security hygiene, and reproducibility over a broad frontend redesign.
+- Real Gemini mode requires a Gemini API key and production-grade secret handling.
+
+## Non-Goals
+
+- No new RAG features are required for the portfolio demo.
+- No large chat refactor or UI redesign is part of the reviewer path.
+- No production deployment work is assumed beyond keeping documentation accurate.
+
+## Quick Demo (Docker)
 
 Prereqs: Docker + Docker Compose v2.
 
 1. Clone the repo: `git clone https://github.com/Sapphire-Bridge/rag-foundation.git && cd rag-foundation`
-2. Copy env vars: `cp .env.example .env`.
-3. Create local Docker secret files: `make secrets`.
-4. Either keep `GEMINI_MOCK_MODE=true` for the built-in stub, or write your real Gemini key to `secrets/gemini_api_key` and set `GEMINI_MOCK_MODE=false` in `.env`.
-5. Start the stack: `docker compose up` (add `--build` on first run).
-6. Visit http://localhost:5173 and follow the flow: Register → Login → Create store → Upload → Chat.
+2. Start the deterministic demo stack: `make demo`
+3. Visit http://localhost:8080 and follow the flow: Register/Login -> Create store -> Upload -> Chat.
+4. Stop and remove demo containers/volumes: `make demo-down`.
+
+For real Gemini calls, copy `.env.example` to `.env`, run `make secrets`, write your Gemini key to `secrets/gemini_api_key`, and set `GEMINI_MOCK_MODE=false`.
 
 > Deployers are responsible for production hardening (strong secrets, TLS/proxying, network isolation, auth); the defaults are intentionally development-friendly.
 
@@ -132,8 +206,9 @@ backups and log retention via your hosting provider.
 
 ## Requirements
 
-- **For Docker setup**: Docker & Docker Compose, Gemini API key
-- **For local development**: Python 3.11+, Node.js 20+, Gemini API key
+- **For mock Docker demo**: Docker & Docker Compose v2
+- **For local development**: Python 3.11+, Node.js 20+
+- **For real Gemini mode**: Gemini API key plus production-grade secret handling
 
 ## Alternative: Local Development Setup
 
@@ -242,16 +317,17 @@ STRICT_MODE=1 ./scripts/test-frontend.sh
 
 ### CI Tiers
 
-- `ci-basic` (required): runs on every push/PR, executes backend smoke tests (coverage disabled) and frontend build via the helper scripts with `FAST_TESTS=1`.
-- `ci-strict` (nightly + manual): runs full coverage, lint, type checking, dependency audits, and OpenAPI drift detection. Trigger via the “Run workflow” button or wait for the nightly schedule.
+- `ci-basic` (required): runs on every push/PR, executes the backend and frontend helper scripts in strict mode, treats OpenAPI drift as blocking, and keeps mypy temporarily non-fatal where configured.
+- `ci-strict` (nightly + manual): runs full coverage, lint, type checking, dependency audits, Bandit, image scanning, frontend audit, and OpenAPI drift detection. Trigger via the "Run workflow" button or wait for the nightly schedule.
 
 Always run the strict helper scripts locally before requesting review to avoid surprises when the nightly job runs.
 
 ### Security & Dependency Scans
 
-- Local: run `./scripts/security-scan.sh` (pip-audit, npm audit, optional Gitleaks if installed).
+- Local: run `./scripts/security-scan.sh` (pip-audit, Bandit medium/high gate, npm production audit, optional Gitleaks if installed).
 - CI: see `docs/security/ci.md` for the "what runs when" matrix. The adaptive Security CI workflow runs Gitleaks, Semgrep, and Trivy everywhere, and adds CodeQL + Dependency Review on public repos.
 - Strict: `./scripts/security-scan.sh` + `STRICT_MODE=1 ./scripts/test-backend.sh` and `STRICT_MODE=1 ./scripts/test-frontend.sh` before releases.
+- Bandit policy and accepted low-severity noise are documented in [`docs/security/bandit-triage.md`](docs/security/bandit-triage.md).
 
 ## Usage
 
