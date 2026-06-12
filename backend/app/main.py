@@ -45,11 +45,12 @@ def create_app() -> FastAPI:
         """Validate critical config on startup - fail fast if misconfigured."""
         logger.info("Validating configuration at startup...")
         try:
-            # Config validation happens during Settings instantiation via validators
-            # This explicit check ensures we fail fast if config is invalid
-            assert settings.JWT_SECRET, "JWT_SECRET validation failed"
+            # Config validation happens during Settings instantiation via validators.
+            if not settings.JWT_SECRET:
+                raise ValueError("JWT_SECRET validation failed")
             if not settings.GEMINI_MOCK_MODE:
-                assert settings.GEMINI_API_KEY, "GEMINI_API_KEY validation failed"
+                if not settings.GEMINI_API_KEY:
+                    raise ValueError("GEMINI_API_KEY validation failed")
             else:
                 logger.warning("GEMINI_MOCK_MODE enabled - skipping real Gemini API key validation.")
             logger.info("Configuration validation passed")

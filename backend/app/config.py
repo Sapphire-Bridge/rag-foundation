@@ -17,7 +17,8 @@ from app.file_types import (
 )
 
 
-DEV_DEFAULT_JWT_SECRET = "dev_secret_DO_NOT_USE_IN_PRODUCTION_generate_real_secret_with_secrets_module"
+# Bandit B105: development-only placeholder rejected in production validators.
+DEV_DEFAULT_JWT_SECRET = "dev_secret_DO_NOT_USE_IN_PRODUCTION_generate_real_secret_with_secrets_module"  # nosec B105
 DEFAULT_DB_PASSWORDS = {
     "changeme_local_only",
     "localdev_password_change_in_production",
@@ -118,7 +119,8 @@ class Settings(BaseSettings):
     UPLOAD_PROFILE: str = "safe"  # safe | office | all-supported | custom
     ALLOWED_UPLOAD_MIMES: List[str] = list(SAFE_DEFAULT_UPLOAD_MIMES)
     TMP_DIR: str = Field(
-        default="/tmp/rag_uploads",
+        # Bandit B108: configurable upload scratch dir; entrypoint enforces writability.
+        default="/tmp/rag_uploads",  # nosec B108
         validation_alias="UPLOAD_FOLDER",  # support UPLOAD_FOLDER env for portability
     )
     TMP_MAX_AGE_HOURS: int = 24

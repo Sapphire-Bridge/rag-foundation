@@ -1,7 +1,7 @@
 COMPOSE_DEV=docker-compose
 COMPOSE_PROD=docker-compose -f docker-compose.prod.yml --env-file .env
 
-.PHONY: up-prod up-dev down logs logs-all migrate shell test clean secrets
+.PHONY: up-prod down-prod up-dev down logs logs-all logs-prod migrate migrate-prod shell test clean secrets demo demo-down demo-reset
 
 up-prod:
 	$(COMPOSE_PROD) up -d --build
@@ -49,7 +49,9 @@ secrets:
 	@echo "Secrets generated under ./secrets (write a real Gemini key to secrets/gemini_api_key when GEMINI_MOCK_MODE=false)"
 
 demo:
-	docker-compose -f docker-compose.demo.yml up --build
+	docker-compose -f docker-compose.demo.yml up --build --remove-orphans --force-recreate
 
 demo-down:
 	docker-compose -f docker-compose.demo.yml down -v --remove-orphans
+
+demo-reset: demo-down demo

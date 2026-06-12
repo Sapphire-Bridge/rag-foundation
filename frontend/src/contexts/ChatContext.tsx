@@ -82,6 +82,7 @@ export const ChatProvider: React.FC<{
   const [threadNames, setThreadNames] = useState<Record<string, string>>({});
   const [lastError, setLastError] = useState<string | null>(null);
   const currentAssistantMessageId = useRef<string | null>(null);
+  const serverAssistantMessageId = useRef<string | null>(null);
   const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
   const runtimeRef = useRef<ReturnType<typeof useSseRuntime> | null>(null);
   const sessionsRef = useRef<ChatSessionSummary[]>([]);
@@ -134,6 +135,8 @@ export const ChatProvider: React.FC<{
       rt.thread.cancelRun?.();
       rt.thread.reset?.();
     }
+    currentAssistantMessageId.current = null;
+    serverAssistantMessageId.current = null;
     setSelectedCitationIndex(null);
     setShowCitations(false);
     setActiveCitationMessageId(null);
@@ -270,7 +273,9 @@ export const ChatProvider: React.FC<{
 
       if (data.type === "start") {
         const threadId = getActiveThreadId();
-        const msgId = captureAssistantMessageId();
+        serverAssistantMessageId.current = data.messageId ? String(data.messageId) : null;
+        const msgId = captureAssistantMessageId() ?? serverAssistantMessageId.current;
+        currentAssistantMessageId.current = msgId;
         setActiveCitationMessageId(null);
         setLastError(null);
         if (activeSessionId) {
@@ -293,7 +298,8 @@ export const ChatProvider: React.FC<{
 
       if (data.type === "source-document") {
         const threadId = getActiveThreadId();
-        const msgId = currentAssistantMessageId.current ?? captureAssistantMessageId();
+        const msgId =
+          currentAssistantMessageId.current ?? captureAssistantMessageId() ?? serverAssistantMessageId.current;
         if (!threadId || !msgId) return;
         const nextCitation: Citation = {
           sourceId: data.sourceId,
@@ -311,6 +317,7 @@ export const ChatProvider: React.FC<{
             },
           };
         });
+        setActiveCitationMessageId(msgId);
       }
     },
   });
@@ -352,6 +359,7 @@ export const ChatProvider: React.FC<{
         runtime.thread.cancelRun();
         runtime.thread.reset(threadMessages);
         currentAssistantMessageId.current = null;
+        serverAssistantMessageId.current = null;
         const key = sessionId || getCitationKey();
         if (key) {
           setCitationByMessage((prev) => (prev[key] ? prev : { ...prev, [key]: {} }));
@@ -372,6 +380,8 @@ export const ChatProvider: React.FC<{
       setActiveSessionId(sessionId);
       runtime.thread.cancelRun();
       runtime.thread.reset();
+      currentAssistantMessageId.current = null;
+      serverAssistantMessageId.current = null;
       setSelectedCitationIndex(null);
       setShowCitations(false);
       setActiveCitationMessageId(null);
@@ -386,6 +396,8 @@ export const ChatProvider: React.FC<{
     setActiveSessionId(newId);
     runtime.thread.cancelRun();
     runtime.thread.reset();
+    currentAssistantMessageId.current = null;
+    serverAssistantMessageId.current = null;
     setSelectedCitationIndex(null);
     setShowCitations(false);
     setActiveCitationMessageId(null);
@@ -433,6 +445,7 @@ export const ChatProvider: React.FC<{
 
   const resetThreadUi = useCallback(() => {
     currentAssistantMessageId.current = null;
+    serverAssistantMessageId.current = null;
     setActiveCitationMessageId(null);
     setSelectedCitationIndex(null);
     setShowCitations(false);

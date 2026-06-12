@@ -3,11 +3,11 @@
 This project targets small deployments (≈20–50 users) using the existing **sync FastAPI + SQLAlchemy** stack and **Gunicorn + Uvicorn** workers.
 
 ## Quick Start (1-hour path)
-1. `cp .env.prod.example .env` (or `.env.example` for local) and fill **JWT_SECRET**, **GEMINI_API_KEY**, **POSTGRES_PASSWORD**, **CORS_ORIGINS**.
+1. Copy `.env.example` to `.env` or create Docker secret files from `secrets.example/`, then fill **JWT_SECRET**, **GEMINI_API_KEY**, **DATABASE_URL**, **REDIS_URL**, and **CORS_ORIGINS**.
 2. `make up-prod` (uses `docker-compose.prod.yml`, builds images, starts db/redis/backend/worker/frontend/proxy). Default proxy host port is `8888` mapping to nginx `8080`.
 3. Create first admin: `docker-compose -f docker-compose.prod.yml exec backend python -m scripts.create_first_admin admin@example.com StrongPass123!`
 4. Verify: `docker-compose -f docker-compose.prod.yml exec backend curl http://localhost:8000/health` (200 when db/redis/gemini OK). `/metrics` should be 403 unless allowlisted in the proxy config. If you proxy `/health` through nginx, you can instead hit `http://localhost:8888/health`.
-5. Rollback: `make down` (or `docker-compose -f docker-compose.prod.yml down`), optional volume cleanup `docker-compose -f docker-compose.prod.yml down -v`.
+5. Rollback: `make down-prod` (or `docker-compose -f docker-compose.prod.yml down`), optional volume cleanup `docker-compose -f docker-compose.prod.yml down -v`.
 
 ## Make targets
 - `make up-prod` – start prod stack (proxy on host port 8888 by default; backend/frontend not exposed directly)
@@ -17,7 +17,7 @@ This project targets small deployments (≈20–50 users) using the existing **s
 - `make migrate` – run Alembic via migrations service
 - `make clean` – stop and remove volumes/orphans
 - `make secrets` – generate a JWT secret file under ./secrets (fill others manually)
-- `demo` – start a mock-mode demo stack (`docker-compose.demo.yml`, serves frontend on :8080)
+- `make demo` – start a mock-mode demo stack (`docker-compose.demo.yml`, serves frontend on :8080)
 
 ## Dev vs Production
 - **Disable dev login** in prod: `ALLOW_DEV_LOGIN=false`, `STRICT_MODE=true`, `REQUIRE_CSRF_HEADER=true`.
@@ -26,8 +26,8 @@ This project targets small deployments (≈20–50 users) using the existing **s
 - **TLS/Proxy**: run behind HTTPS (nginx/Caddy/Traefik); set `CORS_ORIGINS` to your domains.
 - ⚠️ Note: `STRICT_MODE` defaults to true. If set to false in a production environment, the application will fail to start to prevent accidental exposure of development routes.
 - **TLS setup**:
-  - Self-signed (testing only): see `certs/README.md` for `openssl` command to generate `fullchain.pem` and `privkey.pem`.
-  - Let's Encrypt: use certbot or terminate TLS at your load balancer and keep the proxy on HTTP internally.
+  - Terminate TLS at nginx/Caddy/Traefik or your load balancer and keep the app network HTTP-only internally.
+  - For self-signed testing, generate certificates with your platform's `openssl` workflow and mount them into the proxy only outside the demo stack.
   - Metrics: `/metrics` is allowlisted to private ranges in `proxy/nginx.conf`; tighten or expose internally only.
 - **Branding**: admin-only `/api/settings` persists app name/icon/theme in the DB (`app_settings` table); include this table in backups.
 
@@ -58,8 +58,9 @@ This project targets small deployments (≈20–50 users) using the existing **s
 ## Running
 - Docker Compose (uses Gunicorn): `docker-compose up --build`
 - Production Compose with proxy: `make up-prod` (or `docker-compose -f docker-compose.prod.yml --env-file .env up -d --build`; proxy listens on host port 8888 by default)
-- Demo Compose: `docker-compose -f docker-compose.demo.yml up` (mock mode, frontend on :8080)
-  - If you previously ran a different Postgres password, reset the demo volume first: `docker-compose -f docker-compose.demo.yml down -v`
+- Demo Compose: `make demo` (mock mode, frontend on :8080, no external API key required)
+  - Stop/reset demo containers and volumes: `make demo-down`
+  - If you previously ran a different Postgres password, reset and start in one step: `make demo-reset`
 - Health: `GET /health` (200 when DB + Gemini are OK). From the host, use `docker-compose -f docker-compose.prod.yml exec backend curl http://localhost:8000/health`, or if proxied via nginx, `http://localhost:8888/health`.
 - Metrics: `GET /metrics` (Prometheus format, by default only reachable from localhost; expose internally to Prometheus via your proxy/load balancer as needed)
 
